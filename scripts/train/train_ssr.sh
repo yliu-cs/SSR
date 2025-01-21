@@ -15,13 +15,14 @@ torchrun \
     --output_dir ./checkpoint/SSR \
     --bf16 True \
     --per_device_train_batch_size 8 \
+    --remove_unused_columns False \
     --eval_strategy no \
-    --save_strategy epoch \
+    --save_strategy steps \
+    --save_steps 1000 \
     --save_only_model True \
-    --save_total_limit 1 \
-    --num_train_epochs 2 \
+    --max_steps 50000 \
     --learning_rate 3e-5 \
     --lr_scheduler_type cosine \
-    --warmup_steps 800 \
+    --warmup_steps 400 \
     --logging_steps 1 \
     --report_to none

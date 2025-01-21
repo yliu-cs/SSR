@@ -35,11 +35,9 @@ class MambaCausalLMOutput(ModelOutput):
 class SSRMambaForCausalLM(MambaForCausalLM):
     def __init__(self, config) -> None:
         super().__init__(config)
-
         # Initialize projectors for Image and Tor
         self.image_proj = self.build_projector(1024, self.config.hidden_size)
         self.tor_proj = self.build_projector(self.config.hidden_size, 4096)
-        self.backbone.embeddings = nn.Embedding(num_embeddings=92546, embedding_dim=self.config.hidden_size)
     
     @staticmethod
     def build_projector(mm_hidden_size, hidden_size):
