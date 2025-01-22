@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 from ssr.utils.load_ptm import load_mamba, load_internlm3
 from transformers import PretrainedConfig, PreTrainedModel, CLIPVisionModel, SiglipVisionModel
@@ -10,12 +11,14 @@ class SSRConfig(PretrainedConfig):
         , mamba_path: str
         , internlm3_path: str
         , bits: str
+        , device: torch.device
         , **kwargs
     ) -> None:
         super().__init__(**kwargs)
         self.mamba_path = mamba_path
         self.internlm3_path = internlm3_path
         self.bits = bits
+        self.device = device
 
 
 class SSR(PreTrainedModel):
@@ -24,9 +27,17 @@ class SSR(PreTrainedModel):
         self.config = config
         self.image_encoder = clip_vision
         self.depth_encoder = siglip
-        self.mamba = load_mamba(self.config.mamba_path)
-        self.internlm3, self.tokenizer = load_internlm3(self.config.internlm3_path, self.config.bits)
+        self.mamba = load_mamba(self.config.mamba_path, device=self.config.device)
+        self.internlm3, self.tokenizer = load_internlm3(self.config.internlm3_path, self.config.bits, device=self.config.device)
         self.mamba.backbone.embeddings = nn.Embedding(num_embeddings=len(self.tokenizer) + 2, embedding_dim=self.mamba.config.hidden_size)
     
-    def forward(self, question, rationale, answer, image, depth):
-        pass
+    def forward(
+        self
+        , input_ids: torch.Tensor
+        , attention_mask: torch.Tensor
+        , labels: torch.Tensor
+        , image: torch.Tensor
+        , depth: torch.Tensor
+    ):
+        print(f"{input_ids.size()=} {attention_mask.size()=} {labels.size()=} {image.size()=} {depth.size()=}")
+        exit()

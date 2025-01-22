@@ -5,10 +5,13 @@ from depth_pro import load_pil
 from dataclasses import dataclass
 from datasets import load_dataset
 from typing import List, Dict, Any
+from ssr.utils.misc import convert_depth
 from depth_pro.depth_pro import DepthPro
 from torch.utils.data import ChainDataset
 from torchvision.transforms import Compose
 from transformers import CLIPProcessor, SiglipVisionModel
+from ssr.models.tokenization_internlm3 import InternLM3Tokenizer
+from ssr.utils.prompt import SSRStage, SSRSpecialToken, repeat_special_tokens, construct_conversation, create_labels
 
 
 def load_depth(
@@ -34,12 +37,24 @@ def prepare_vrc(
     rationale = "".join(raw_data["steps"])
     answer = raw_data["final_answer"]
     return {
-        "question": "<image>\n" + question
+        "question": "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
         , "rationale": rationale
         , "answer": answer
-        , "image": (clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
-        # , "depth": (siglip_processor(images=raw_data["depth"].convert("RGB"), return_tensors="pt").pixel_values).squeeze(0)
-        , "depth": load_depth(image=image, depth_pro=depth_pro, depth_transform=depth_transform)
+        , "image": (
+            clip_processor(
+                images=image
+                , return_tensors="pt"
+            ).pixel_values
+        ).squeeze(0)
+        , "depth": (
+            siglip_processor(
+                images=convert_depth(
+                    load_depth(image=image, depth_pro=depth_pro, depth_transform=depth_transform)
+                    , convert_16bits=True
+                )
+                , return_tensors="pt"
+            ).pixel_values
+        ).squeeze(0)
     }
 
 
@@ -71,13 +86,37 @@ def prepare_ssr_dataset(
 
 @dataclass
 class SSRDataCollator(object):
+    stage: SSRStage
+    n_tor: int
+    n_image_tokens: int
+    n_depth_tokens: int
+    tokenizer: InternLM3Tokenizer
     def __call__(self, instances: list[dict]) -> dict[str, torch.Tensor]:
-        for i in range(len(instances)):
-            print(f"{instances[i].keys()=}")
-        question, rationale, answer, image, depth = tuple([instance[key] for instance in instances] for key in ("question", "rationale", "answer", "image", "depth"))
-        print(f"{type(question[0])=}")
-        print(f"{type(rationale[0])=}")
-        print(f"{type(answer[0])=}")
-        print(f"{type(image[0])=}")
-        print(f"{type(depth[0])=}")
-        exit()
+        convs = []
+        for instance in instances:
+            question, rationale, answer = (instance[key] for key in ("question", "rationale", "answer"))
+            conv = repeat_special_tokens(
+                input_string=construct_conversation(
+                    question=question
+                    , rationale=rationale if self.stage == SSRStage.mamba else ""
+                    , answer=answer
+                    , stage=self.stage
+                    , n_tor=self.n_tor
+                )
+                , special_tokens=[SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN]
+                , n_repeats=[self.n_image_tokens, self.n_depth_tokens]
+            )
+            convs.append(conv)
+        inputs = self.tokenizer(convs, padding="longest", return_tensors="pt", add_special_tokens=False)
+        input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
+        labels = create_labels(input_ids=input_ids, stage=self.stage, tokenizer=self.tokenizer)
+        image, depth = tuple([instance[key] for instance in instances] for key in ("image", "depth"))
+        image = torch.stack(image, dim=0)
+        depth = torch.stack(depth, dim=0)
+        return {
+            "input_ids": input_ids
+            , "attention_mask": attention_mask
+            , "labels": labels
+            , "image": image
+            , "depth": depth
+        }

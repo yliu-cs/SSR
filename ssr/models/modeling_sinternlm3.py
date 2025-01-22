@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from dataclasses import dataclass
+from ssr.utils.misc import build_projector
 from transformers.cache_utils import Cache
 from typing import List, Tuple, Optional, Union
 from transformers.modeling_outputs import ModelOutput
@@ -31,9 +32,9 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
         self.max_length = config.max_length
         self.post_init()
         # TODO: Image Projector
-        self.image_proj = None
+        self.image_proj = build_projector(mm_hidden_size=1024, hidden_size=4096)
         # TODO: Depth Projector
-        self.depth_proj = None
+        self.depth_proj = build_projector(mm_hidden_size=1024, hidden_size=4096)
 
     def merge_input_embeds_with_image_depth(
         self
@@ -79,6 +80,7 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
         depth_embeds: torch.FloatTensor = None,
         tor_embeds: torch.FloatTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
+        image_mask: torch.BoolTensor = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -102,6 +104,7 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
 
         outputs = self.model(
             attention_mask=attention_mask,
+            image_mask=image_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,

@@ -53,6 +53,42 @@ logger = logging.get_logger(__name__)
 _CONFIG_FOR_DOC = "InternLM3Config"
 
 
+class LoRA(nn.Module):
+    def __init__(
+        self
+        , in_features: int
+        , out_features: int
+        , bias: bool = True
+        , device = None
+        , dtype = None
+        , lora_r = 8
+        , lora_alpha = 16
+        , lora_dropout = 0.05
+        , lora_len = 0
+        , **kwargs
+    ) -> None:
+        super().__init__()
+        self.lora_r = lora_r
+        self.lora_alpha = lora_alpha
+        self.lora_len = lora_len
+        self.lora_dropout = nn.Dropout(p=lora_dropout) if lora_dropout > 0. else lambda x: x
+        self.lora_scaling = self.lora_alpha / self.lora_r
+        self.lora_A = nn.Linear(in_features, self.lora_r, bias=False, device=device, dtype=dtype)
+        self.lora_B = nn.Linear(self.lora_r, out_features, bias=False, device=device, dtype=dtype)
+        self.ffn = nn.Linear(in_features, out_features, bias=bias, device=device, dtype=dtype)
+    
+    def forward(self, x, image_mask=None):
+        res = self.ffn(x)
+        if image_mask is not None:
+            if torch.sum(image_mask) > 0:
+                part_x = x[image_mask]
+                res[image_mask] += self.lora_B(self.lora_A(self.lora_dropout(part_x))) * self.lora_scaling
+            else:
+                part_x = x[:, :1]
+                res[:, :1] += self.lora_B(self.lora_A(self.lora_dropout(part_x))) * 0
+        return res
+
+
 class InternLM3RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         """
@@ -228,13 +264,16 @@ class InternLM3MLP(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.bias)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.bias)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.bias)
+        # self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.bias)
+        # self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.bias)
+        # self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.bias)
+        self.gate_proj = LoRA(self.hidden_size, self.intermediate_size, bias=False, lora_r=256, lora_alpha=256, lora_len=576)
+        self.up_proj = LoRA(self.hidden_size, self.intermediate_size, bias=False, lora_r=256, lora_alpha=256, lora_len=576)
+        self.down_proj = LoRA(self.intermediate_size, self.hidden_size, bias=False, lora_r=256, lora_alpha=256, lora_len=576)
         self.act_fn = ACT2FN[config.hidden_act]
-
-    def forward(self, x):
-        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+    
+    def forward(self, x, image_mask):
+        down_proj = self.down_proj(self.act_fn(self.gate_proj(x, image_mask)) * self.up_proj(x, image_mask), image_mask)
         return down_proj
 
 
@@ -274,10 +313,15 @@ class InternLM3Attention(nn.Module):
         self.rope_theta = config.rope_theta
         self.is_causal = True
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.qkv_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.qkv_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.qkv_bias)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.bias)
+        # self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.qkv_bias)
+        # self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.qkv_bias)
+        # self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.qkv_bias)
+        # self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.bias)
+
+        self.q_proj = LoRA(self.hidden_size, self.num_heads * self.head_dim, bias=config.qkv_bias, lora_r=256, lora_alpha=256, lora_len=576)
+        self.k_proj = LoRA(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.qkv_bias, lora_r=256, lora_alpha=256, lora_len=576)
+        self.v_proj = LoRA(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.qkv_bias, lora_r=256, lora_alpha=256, lora_len=576)
+        self.o_proj = LoRA(self.num_heads * self.head_dim, self.hidden_size, bias=config.bias, lora_r=256, lora_alpha=256, lora_len=576)
 
         # TODO (joao): remove in v4.46 (RoPE is computed in the model, not in the decoder layers)
         self.rotary_emb = InternLM3RotaryEmbedding(config=self.config)
@@ -286,6 +330,7 @@ class InternLM3Attention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        image_mask: Optional[torch.BoolTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
@@ -296,9 +341,9 @@ class InternLM3Attention(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+        query_states = self.q_proj(hidden_states, image_mask)
+        key_states = self.k_proj(hidden_states, image_mask)
+        value_states = self.v_proj(hidden_states, image_mask)
 
         # use -1 to infer num_heads and num_key_value_heads as they may vary if tensor parallel is used
         query_states = query_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
@@ -345,7 +390,7 @@ class InternLM3Attention(nn.Module):
 
         attn_output = attn_output.reshape(bsz, q_len, -1)
 
-        attn_output = self.o_proj(attn_output)
+        attn_output = self.o_proj(attn_output, image_mask)
 
         if not output_attentions:
             attn_weights = None
@@ -372,6 +417,7 @@ class InternLM3FlashAttention2(InternLM3Attention):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.LongTensor] = None,
+        image_mask: Optional[torch.BoolTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
@@ -390,9 +436,9 @@ class InternLM3FlashAttention2(InternLM3Attention):
 
         bsz, q_len, _ = hidden_states.size()
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+        query_states = self.q_proj(hidden_states, image_mask)
+        key_states = self.k_proj(hidden_states, image_mask)
+        value_states = self.v_proj(hidden_states, image_mask)
 
         # Flash attention requires the input to have the shape
         # batch_size x seq_length x head_dim x hidden_dim
@@ -467,7 +513,7 @@ class InternLM3FlashAttention2(InternLM3Attention):
         )
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
-        attn_output = self.o_proj(attn_output)
+        attn_output = self.o_proj(attn_output, image_mask)
 
         if not output_attentions:
             attn_weights = None
@@ -601,8 +647,7 @@ class InternLM3DecoderLayer(nn.Module):
         past_key_value: Optional[Cache] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        image_mask: Optional[torch.BoolTensor] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -635,12 +680,11 @@ class InternLM3DecoderLayer(nn.Module):
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
+            image_mask=image_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
             output_attentions=output_attentions,
             use_cache=use_cache,
-            cache_position=cache_position,
-            position_embeddings=position_embeddings,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -648,7 +692,7 @@ class InternLM3DecoderLayer(nn.Module):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
+        hidden_states = self.mlp(hidden_states, image_mask)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -824,6 +868,7 @@ class InternLM3Model(InternLM3PreTrainedModel):
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
+        image_mask: Optional[torch.BoolTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -834,6 +879,7 @@ class InternLM3Model(InternLM3PreTrainedModel):
         cache_position: Optional[torch.LongTensor] = None,
         **flash_attn_kwargs: Unpack[FlashAttentionKwargs],
     ) -> Union[Tuple, BaseModelOutputWithPast]:
+
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -852,6 +898,7 @@ class InternLM3Model(InternLM3PreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+            image_mask = torch.zeros(inputs_embeds.shape[:2]).to(inputs_embeds.device).bool()
 
         # kept for BC (non `Cache` `past_key_values` inputs)
         return_legacy_cache = False
@@ -893,21 +940,22 @@ class InternLM3Model(InternLM3PreTrainedModel):
                 all_hidden_states += (hidden_states,)
 
             if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs, output_attentions, None, image_mask)
+                    return custom_forward
+                layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(decoder_layer),
                     hidden_states,
-                    causal_mask,
+                    attention_mask,
                     position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    position_embeddings,
+                    None,
                 )
             else:
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=causal_mask,
+                    image_mask=image_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     output_attentions=output_attentions,

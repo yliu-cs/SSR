@@ -14,7 +14,8 @@ torchrun \
     --deepspeed scripts/ds_zero2.json \
     --output_dir ./checkpoint/SSR \
     --bf16 True \
-    --per_device_train_batch_size 8 \
+    --bits 4 \
+    --per_device_train_batch_size 2 \
     --remove_unused_columns False \
     --eval_strategy no \
     --save_strategy steps \

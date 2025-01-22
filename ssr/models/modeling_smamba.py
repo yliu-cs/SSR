@@ -1,9 +1,9 @@
 import re
 import torch
-from torch import nn
 from dataclasses import dataclass
 from typing import Tuple, Optional, Union
 from transformers import MambaForCausalLM
+from ssr.utils.misc import build_projector
 from transformers.modeling_outputs import ModelOutput
 
 
@@ -36,21 +36,8 @@ class SSRMambaForCausalLM(MambaForCausalLM):
     def __init__(self, config) -> None:
         super().__init__(config)
         # Initialize projectors for Image and Tor
-        self.image_proj = self.build_projector(1024, self.config.hidden_size)
-        self.tor_proj = self.build_projector(self.config.hidden_size, 4096)
-    
-    @staticmethod
-    def build_projector(mm_hidden_size, hidden_size):
-        projector_type = "mlp2x_gelu"
-        mlp_gelu_match = re.match(r"^mlp(\d+)x_gelu$", projector_type)
-        if mlp_gelu_match:
-            mlp_depth = int(mlp_gelu_match.group(1))
-            modules = [nn.Linear(mm_hidden_size, hidden_size)]
-            for _ in range(1, mlp_depth):
-                modules.append(nn.GELU())
-                modules.append(nn.Linear(hidden_size, hidden_size))
-            return nn.Sequential(*modules)
-        raise ValueError(f"Unknown projector type: {projector_type}")
+        self.image_proj = build_projector(1024, self.config.hidden_size)
+        self.tor_proj = build_projector(self.config.hidden_size, 4096)
 
     def merge_input_embeds_with_image(
         self
