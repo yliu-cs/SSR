@@ -86,3 +86,22 @@ def build_projector(mm_hidden_size: int = 1024, hidden_size: int = 4096) -> nn.S
             modules.append(nn.Linear(hidden_size, hidden_size))
         return nn.Sequential(*modules)
     raise ValueError(f"Unknown projector type: {projector_type}")
+
+
+def freeze_module(model: nn.Module) -> None:
+    for param in model.parameters():
+        param.requires_grad = False
+
+
+def has_nan(tensor: torch.Tensor) -> bool:
+    return torch.isnan(tensor).any()
+
+
+def get_grad(model: nn.Module) -> float:
+    grad = 0.0
+    for p in model.parameters():
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            grad += param_norm.item() ** 2
+    grad = grad ** 0.5
+    return grad

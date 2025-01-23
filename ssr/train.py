@@ -13,7 +13,9 @@ from transformers import Trainer
 from ssr.utils.prompt import SSRStage
 from dataclasses import dataclass, field
 from ssr.models.modeling_ssr import SSR, SSRConfig
+from torch.distributed.fsdp.wrap import ModuleWrapPolicy
 from ssr.data.data import prepare_ssr_dataset, SSRDataCollator
+from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
 from ssr.utils.load_ptm import load_clip_vit, load_siglip, load_depth_pro
 
 
@@ -32,14 +34,30 @@ class DataArguments:
         os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VRC-Bench")
     ])
     n_tor: int = field(default=10)
-    n_image_tokens: int = field(default=int((336 / 14) ** 2))
-    n_depth_tokens: int = field(default=int((384 / 14) ** 2))
+    n_image_tokens: int = field(default=(336 // 14) ** 2)
+    n_depth_tokens: int = field(default=(384 // 14) ** 2)
 
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
     bits: int = field(default=16)
     stage: int = field(default=SSRStage.mamba)
+    bf16: bool = field(default=False)
+    fp16: bool = field(default=False)
+    fsdp_mamba_mp: dict = field(
+        default_factory=lambda: {
+            "param_dtype": "float32",
+            "reduce_dtype": "float32",
+            "buffer_dtype": "float32",
+        }
+    )
+    fsdp_internlm3_mp: dict = field(
+        default_factory=lambda: {
+            "param_dtype": "float16",
+            "reduce_dtype": "float16",
+            "buffer_dtype": "float16",
+        }
+    )
 
 
 def train() -> None:
@@ -59,6 +77,7 @@ def train() -> None:
             mamba_path=model_args.mamba_path
             , internlm3_path=model_args.internlm3_path
             , bits=training_args.bits
+            , stage=training_args.stage
             , device=training_args.device
         )
         , clip_vision=clip_vision
@@ -69,6 +88,36 @@ def train() -> None:
     rank0_print(training_args.local_rank, f"{str_datetime()} *Depth Encoder* {count_params(ssr.depth_encoder)}")
     rank0_print(training_args.local_rank, f"{str_datetime()} *Mamba* {count_params(ssr.mamba)}")
     rank0_print(training_args.local_rank, f"{str_datetime()} *InternLM3* {count_params(ssr.internlm3)}")
+
+    mamba_mp = MixedPrecision(
+        param_dtype=getattr(torch, training_args.fsdp_mamba_mp["param_dtype"]),
+        reduce_dtype=getattr(torch, training_args.fsdp_mamba_mp["reduce_dtype"]),
+        buffer_dtype=getattr(torch, training_args.fsdp_mamba_mp["buffer_dtype"]),
+    )
+    internlm3_mp = MixedPrecision(
+        param_dtype=getattr(torch, training_args.fsdp_internlm3_mp["param_dtype"]),
+        reduce_dtype=getattr(torch, training_args.fsdp_internlm3_mp["reduce_dtype"]),
+        buffer_dtype=getattr(torch, training_args.fsdp_internlm3_mp["buffer_dtype"]),
+    )
+    training_args.fsdp_config = {
+        "xla": False
+        , "fsdp_auto_wrap_policy": {
+            "policy": ModuleWrapPolicy
+            , "module_classes": {
+                ssr.mamba
+                , ssr.internlm3
+            }
+        }
+        , "mixed_precision_policies": {
+            ssr.mamba: mamba_mp
+            , ssr.internlm3: internlm3_mp
+        }
+        , "min_num_params": 1e4
+        , "sharding_strategy": ShardingStrategy.SHARD_GRAD_OP
+        , "shard_init": True
+        , "offload_params": False
+        , "activation_checkpointing": True
+    }
 
     trainer = Trainer(
         model=ssr

@@ -1,11 +1,12 @@
 import torch
 from torch import nn
+from einops import rearrange
 import torch.nn.functional as F
 from dataclasses import dataclass
-from ssr.utils.misc import build_projector
 from transformers.cache_utils import Cache
 from typing import List, Tuple, Optional, Union
 from transformers.modeling_outputs import ModelOutput
+from ssr.utils.misc import build_projector, has_nan, get_grad
 from .modeling_internlm3 import Cache, Unpack, KwargsForCausalLM, InternLM3PreTrainedModel, InternLM3Model
 
 
@@ -30,12 +31,10 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
         self.vocab_size = config.vocab_size
         self.output = nn.Linear(config.hidden_size, config.vocab_size - 2, bias=False)
         self.max_length = config.max_length
+        self.image_proj = build_projector(1024, 4096)
+        self.depth_proj = build_projector(1152, 4096)
         self.post_init()
-        # TODO: Image Projector
-        self.image_proj = build_projector(mm_hidden_size=1024, hidden_size=4096)
-        # TODO: Depth Projector
-        self.depth_proj = build_projector(mm_hidden_size=1024, hidden_size=4096)
-
+    
     def merge_input_embeds_with_image_depth(
         self
         , image_embeds: torch.FloatTensor
@@ -47,31 +46,20 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
         # Merge Image Embeds
         if image_embeds is not None and input_ids.size(1) != 1:
             image_embeds = self.image_proj(image_embeds.to(inputs_embeds.dtype))
-            batch_idx_image_embeds = 0
-            B, C, D = image_embeds.size()
             for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id == self.config.image_token_id)
-                num_image_tokens_per_sample = len(matching[0]) // C
-                inputs_embeds[batch_idx][matching] = image_embeds[batch_idx_image_embeds: batch_idx_image_embeds + num_image_tokens_per_sample].view(-1, D)
-                batch_idx_image_embeds += num_image_tokens_per_sample
+                matching = torch.where(input_id == self.image_token_id)
+                inputs_embeds[batch_idx][matching] = image_embeds[batch_idx, ...]
         # Merge Depth Embeds
         if depth_embeds is not None and input_ids.shape[1] != 1:
             depth_embeds = self.depth_proj(depth_embeds.to(inputs_embeds.dtype))
-            batch_idx_depth_embeds = 0
-            B, C, D = depth_embeds.size()
             for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id == self.config.depth_token_id)
-                num_depth_tokens_per_sample = len(matching[0]) // C
-                inputs_embeds[batch_idx][matching] = depth_embeds[batch_idx_depth_embeds: batch_idx_depth_embeds + num_depth_tokens_per_sample].view(-1, D)
-                batch_idx_depth_embeds += num_depth_tokens_per_sample
-        # Merge Image Tor Embeds
+                matching = torch.where(input_id == self.depth_token_id)
+                inputs_embeds[batch_idx][matching] = depth_embeds[batch_idx, ...]
+        # Merge Tor Embeds
         if tor_embeds is not None and input_ids.size(1) != 1:
-            batch_idx_tor_embeds = 0
             for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id  == self.config.image_tor_token_id)
-                num_tor_tokens_per_sample = len(matching[0])
-                inputs_embeds[batch_idx][matching] = tor_embeds[batch_idx_tor_embeds:batch_idx_tor_embeds + num_tor_tokens_per_sample].to(inputs_embeds.dtype)
-                batch_idx_tor_embeds += num_tor_tokens_per_sample
+                matching = torch.where(input_id  == self.tor_token_id)
+                inputs_embeds[batch_idx][matching] = tor_embeds[batch_idx].to(inputs_embeds.dtype)
     
     def forward(
         self,
@@ -100,7 +88,11 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
+            print(f"{has_nan(inputs_embeds)=} {has_nan(tor_embeds)=}")
+            print(f"{inputs_embeds.dtype=} {image_embeds.dtype=} {depth_embeds.dtype=} {tor_embeds.dtype=}")
             self.merge_input_embeds_with_image_depth(image_embeds, depth_embeds, tor_embeds, inputs_embeds, input_ids)
+
+        print(f"{has_nan(attention_mask)=} {has_nan(image_mask)=} {has_nan(inputs_embeds)=}")
 
         outputs = self.model(
             attention_mask=attention_mask,
@@ -114,8 +106,11 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
             return_dict=return_dict,
         )
 
-        hidden_states = outputs[0]
-        logits = self.output(hidden_states)
+        last_hidden_state = outputs.last_hidden_state
+        logits = self.output(last_hidden_state)
+
+        print(f"{self.model.embed_tokens.weight.dtype=} {last_hidden_state.dtype=} {logits.dtype=}")
+        print(f"{has_nan(logits)=} {has_nan(last_hidden_state)=}")
 
         loss = None
         if labels is not None:
@@ -132,11 +127,14 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
+        tor_embeds = last_hidden_state[(input_ids == self.tor_token_id), :]
+        tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
+
         return SSRCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
-            tor_embeds=hidden_states[torch.where(input_ids == self.config.tor_token_index)],
+            tor_embeds=tor_embeds,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )

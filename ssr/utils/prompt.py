@@ -19,7 +19,7 @@ class SSRSpecialToken(StrEnum):
     IMAGE_TOKEN = "<image>"
     DEPTH_TOKEN = "<depth>"
 
-IGNORE_TOKEN = -100
+IGNORE_TOKEN_ID = -100
 SYSTEM_PROMPT = "\n".join([
     "You are an AI assistant whose name is InternLM."
     , "- InternLM is a conversational language model that is designed to be helpful, honest, and harmless."
@@ -117,13 +117,13 @@ def create_labels(
         , dtype=input_ids.dtype
     )
     tor_id = tokenizer.convert_tokens_to_ids([SSRSpecialToken.TOR_TOKEN])[0]
-    labels = torch.full_like(input_ids, IGNORE_TOKEN)
+    labels = torch.full_like(input_ids, IGNORE_TOKEN_ID)
     for batch_idx in range(input_ids.size(0)):
         for i in range(input_ids.size(1) - target.size(0)):
             if torch.equal(input_ids[batch_idx, i:i + target.size(0)], target):
                 labels[batch_idx, i:] = input_ids[batch_idx, i:].clone()
                 break
-    labels[labels == tor_id] = IGNORE_TOKEN
+    labels[labels == tor_id] = IGNORE_TOKEN_ID
     return labels
 
 

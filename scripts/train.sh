@@ -11,10 +11,7 @@ torchrun \
     --master_addr=${MASTER_ADDR} \
     --master_port=${MASTER_PORT} \
     ssr/train.py \
-    --deepspeed scripts/ds_zero2.json \
     --output_dir ./checkpoint/SSR \
-    --bf16 True \
-    --bits 4 \
     --per_device_train_batch_size 2 \
     --remove_unused_columns False \
     --eval_strategy no \
@@ -22,7 +19,7 @@ torchrun \
     --save_steps 1000 \
     --save_only_model True \
     --max_steps 50000 \
-    --learning_rate 3e-5 \
+    --learning_rate 1e-5 \
     --lr_scheduler_type cosine \
     --warmup_steps 400 \
     --logging_steps 1 \
