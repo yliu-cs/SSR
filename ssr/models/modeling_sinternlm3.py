@@ -21,7 +21,7 @@ class SSRCausalLMOutputWithPast(ModelOutput):
     image_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
 
 
-class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
+class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
     _auto_class = "AutoModelForCausalLM"
     _tied_weights_keys = ["output.weight"]
 
@@ -31,8 +31,6 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
         self.vocab_size = config.vocab_size
         self.output = nn.Linear(config.hidden_size, config.vocab_size - 2, bias=False)
         self.max_length = config.max_length
-        self.image_proj = build_projector(1024, 4096)
-        self.depth_proj = build_projector(1152, 4096)
         self.post_init()
     
     def merge_input_embeds_with_image_depth(
@@ -45,13 +43,11 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
     ) -> None:
         # Merge Image Embeds
         if image_embeds is not None and input_ids.size(1) != 1:
-            image_embeds = self.image_proj(image_embeds.to(inputs_embeds.dtype))
             for batch_idx, input_id in enumerate(input_ids):
                 matching = torch.where(input_id == self.image_token_id)
                 inputs_embeds[batch_idx][matching] = image_embeds[batch_idx, ...]
         # Merge Depth Embeds
         if depth_embeds is not None and input_ids.shape[1] != 1:
-            depth_embeds = self.depth_proj(depth_embeds.to(inputs_embeds.dtype))
             for batch_idx, input_id in enumerate(input_ids):
                 matching = torch.where(input_id == self.depth_token_id)
                 inputs_embeds[batch_idx][matching] = depth_embeds[batch_idx, ...]
@@ -88,11 +84,7 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
-            print(f"{has_nan(inputs_embeds)=} {has_nan(tor_embeds)=}")
-            print(f"{inputs_embeds.dtype=} {image_embeds.dtype=} {depth_embeds.dtype=} {tor_embeds.dtype=}")
             self.merge_input_embeds_with_image_depth(image_embeds, depth_embeds, tor_embeds, inputs_embeds, input_ids)
-
-        print(f"{has_nan(attention_mask)=} {has_nan(image_mask)=} {has_nan(inputs_embeds)=}")
 
         outputs = self.model(
             attention_mask=attention_mask,
@@ -108,9 +100,6 @@ class SSRInternLM3ForCausalLM(InternLM3PreTrainedModel):
 
         last_hidden_state = outputs.last_hidden_state
         logits = self.output(last_hidden_state)
-
-        print(f"{self.model.embed_tokens.weight.dtype=} {last_hidden_state.dtype=} {logits.dtype=}")
-        print(f"{has_nan(logits)=} {has_nan(last_hidden_state)=}")
 
         loss = None
         if labels is not None:

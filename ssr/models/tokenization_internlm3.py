@@ -16,7 +16,7 @@ VOCAB_FILES_NAMES = {"vocab_file": "tokenizer.model"}
 SPIECE_UNDERLINE = "▁"
 
 
-class InternLM3Tokenizer(PreTrainedTokenizer):
+class Internlm3Tokenizer(PreTrainedTokenizer):
     """
     Construct a InternLM3 tokenizer. Based on byte-level Byte-Pair-Encoding. The default padding token is unset as there is
     no padding token in the original model.

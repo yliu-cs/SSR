@@ -2,7 +2,7 @@ import re
 import torch
 from typing import List
 from enum import Enum, StrEnum
-from ssr.models.tokenization_internlm3 import InternLM3Tokenizer
+from ssr.models.tokenization_internlm3 import Internlm3Tokenizer
 
 
 class SSRStage(Enum):
@@ -109,7 +109,7 @@ def construct_conversation(
 def create_labels(
     input_ids: torch.Tensor
     , stage: SSRStage
-    , tokenizer: InternLM3Tokenizer
+    , tokenizer: Internlm3Tokenizer
 ) -> str:
     target = torch.tensor(
         tokenizer.convert_tokens_to_ids(["<|im_start|>", "rational", "e", "\n"] if stage == SSRStage.mamba else ["<|im_start|>", "assistant", "\n"])

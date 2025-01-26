@@ -9,9 +9,9 @@ from ssr.utils.misc import (
     , count_params
     , str_datetime
 )
-from transformers import Trainer
 from ssr.utils.prompt import SSRStage
 from dataclasses import dataclass, field
+from transformers import Trainer, TrainerCallback
 from ssr.models.modeling_ssr import SSR, SSRConfig
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
 from ssr.data.data import prepare_ssr_dataset, SSRDataCollator
@@ -44,6 +44,13 @@ class TrainingArguments(transformers.TrainingArguments):
     stage: int = field(default=SSRStage.mamba)
     bf16: bool = field(default=False)
     fp16: bool = field(default=False)
+    fsdp_proj_mp: dict = field(
+        default_factory=lambda: {
+            "param_dtype": "float32",
+            "reduce_dtype": "float32",
+            "buffer_dtype": "float32",
+        }
+    )
     fsdp_mamba_mp: dict = field(
         default_factory=lambda: {
             "param_dtype": "float32",
@@ -94,6 +101,11 @@ def train() -> None:
         reduce_dtype=getattr(torch, training_args.fsdp_mamba_mp["reduce_dtype"]),
         buffer_dtype=getattr(torch, training_args.fsdp_mamba_mp["buffer_dtype"]),
     )
+    proj_mp = MixedPrecision(
+        param_dtype=getattr(torch, training_args.fsdp_proj_mp["param_dtype"]),
+        reduce_dtype=getattr(torch, training_args.fsdp_proj_mp["reduce_dtype"]),
+        buffer_dtype=getattr(torch, training_args.fsdp_proj_mp["buffer_dtype"]),
+    )
     internlm3_mp = MixedPrecision(
         param_dtype=getattr(torch, training_args.fsdp_internlm3_mp["param_dtype"]),
         reduce_dtype=getattr(torch, training_args.fsdp_internlm3_mp["reduce_dtype"]),
@@ -105,12 +117,22 @@ def train() -> None:
             "policy": ModuleWrapPolicy
             , "module_classes": {
                 ssr.mamba
+                , ssr.mamba_image_proj
+                , ssr.mamba_depth_proj
                 , ssr.internlm3
+                , ssr.tor_proj
+                , ssr.internlm3_image_proj
+                , ssr.internlm3_depth_proj
             }
         }
         , "mixed_precision_policies": {
             ssr.mamba: mamba_mp
+            , ssr.mamba_image_proj: proj_mp
+            , ssr.mamba_depth_proj: proj_mp
             , ssr.internlm3: internlm3_mp
+            , ssr.tor_proj: proj_mp
+            , ssr.internlm3_image_proj: proj_mp
+            , ssr.internlm3_depth_proj: proj_mp
         }
         , "min_num_params": 1e4
         , "sharding_strategy": ShardingStrategy.SHARD_GRAD_OP

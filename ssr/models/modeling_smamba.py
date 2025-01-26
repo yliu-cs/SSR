@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from ssr.utils.misc import has_nan
 from typing import Tuple, Optional, Union
 from transformers import MambaForCausalLM
-from ssr.utils.misc import build_projector
 from transformers.modeling_outputs import ModelOutput
 
 
@@ -29,17 +28,12 @@ class MambaCache:
 class MambaCausalLMOutput(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
     cache_params: Optional[MambaCache] = None
-    tor_embeds: Optional[torch.FloatTensor] = None
     last_hidden_state: Optional[Tuple[torch.FloatTensor]] = None
 
 
 class SSRMambaForCausalLM(MambaForCausalLM):
     def __init__(self, config) -> None:
         super().__init__(config)
-        self.image_proj = build_projector(1024, self.config.hidden_size)
-        self.depth_proj = build_projector(1152, self.config.hidden_size)
-        self.tor_proj = build_projector(self.config.hidden_size, 4096)
-        self.post_init()
 
     def merge_input_embeds_with_image_depth(
         self
@@ -50,13 +44,11 @@ class SSRMambaForCausalLM(MambaForCausalLM):
     ) -> None:
         # Merge Image Embeds
         if image_embeds is not None and input_ids.size(1) != 1:
-            image_embeds = self.image_proj(image_embeds.to(inputs_embeds.dtype))
             for batch_idx, input_id in enumerate(input_ids):
                 matching = torch.where(input_id == self.image_token_id)
                 inputs_embeds[batch_idx][matching] = image_embeds[batch_idx, ...]
         # Merge Depth Embeds
         if depth_embeds is not None and input_ids.shape[1] != 1:
-            depth_embeds = self.depth_proj(depth_embeds.to(inputs_embeds.dtype))
             for batch_idx, input_id in enumerate(input_ids):
                 matching = torch.where(input_id == self.depth_token_id)
                 inputs_embeds[batch_idx][matching] = depth_embeds[batch_idx, ...]
@@ -78,7 +70,6 @@ class SSRMambaForCausalLM(MambaForCausalLM):
 
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
-            print(f"{has_nan(inputs_embeds)=}")
             self.merge_input_embeds_with_image_depth(image_embeds, depth_embeds, inputs_embeds, input_ids)
 
         mamba_outputs = self.backbone(
@@ -91,14 +82,8 @@ class SSRMambaForCausalLM(MambaForCausalLM):
         )
         last_hidden_state = mamba_outputs.last_hidden_state
 
-        print(f"{has_nan(last_hidden_state)=}")
-
-        tor_embeds = self.tor_proj(last_hidden_state[(input_ids == self.tor_token_id), :])
-        tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
-        
         return MambaCausalLMOutput(
             loss=None,
             cache_params=mamba_outputs.cache_params,
-            tor_embeds=tor_embeds,
-            last_hidden_state=mamba_outputs.last_hidden_state,
+            last_hidden_state=last_hidden_state,
         )

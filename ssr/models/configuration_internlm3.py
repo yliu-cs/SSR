@@ -26,9 +26,9 @@ logger = logging.get_logger(__name__)
 
 class InternLM3Config(PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of a [`InternLM2Model`]. It is used to instantiate
-    an InternLM2 model according to the specified arguments, defining the model architecture. Instantiating a
-    configuration with the defaults will yield a similar configuration to that of the InternLM2-7B.
+    This is the configuration class to store the configuration of a [`internlm3Model`]. It is used to instantiate
+    an internlm3 model according to the specified arguments, defining the model architecture. Instantiating a
+    configuration with the defaults will yield a similar configuration to that of the internlm3-7B.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.

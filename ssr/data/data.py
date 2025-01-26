@@ -10,7 +10,7 @@ from depth_pro.depth_pro import DepthPro
 from torch.utils.data import ChainDataset
 from torchvision.transforms import Compose
 from transformers import CLIPProcessor, SiglipVisionModel
-from ssr.models.tokenization_internlm3 import InternLM3Tokenizer
+from ssr.models.tokenization_internlm3 import Internlm3Tokenizer
 from ssr.utils.prompt import SSRStage, SSRSpecialToken, repeat_special_tokens, construct_conversation, create_labels
 
 
@@ -90,7 +90,7 @@ class SSRDataCollator(object):
     n_tor: int
     n_image_tokens: int
     n_depth_tokens: int
-    tokenizer: InternLM3Tokenizer
+    tokenizer: Internlm3Tokenizer
     def __call__(self, instances: list[dict]) -> dict[str, torch.Tensor]:
         convs = []
         for instance in instances:

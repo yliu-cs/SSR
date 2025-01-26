@@ -12,7 +12,7 @@ torchrun \
     --master_port=${MASTER_PORT} \
     ssr/train.py \
     --output_dir ./checkpoint/SSR \
-    --per_device_train_batch_size 2 \
+    --per_device_train_batch_size 4 \
     --remove_unused_columns False \
     --eval_strategy no \
     --save_strategy steps \
