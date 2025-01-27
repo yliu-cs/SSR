@@ -16,23 +16,24 @@ def load_internlm3(model_path: str, bits: int, device: torch.device) -> Tuple[SS
     # Huggingface Model Configuration with Bit quantization
     if bits in [4, 8]:
         huggingface_config = {
-            "torch_dtype": torch.float16
+            "torch_dtype": torch.bfloat16
             , "low_cpu_mem_usage": True
             , "attn_implementation": "flash_attention_2"
             , "quantization_config": BitsAndBytesConfig(
                 load_in_4bit=bits == 4
                 , load_in_8bit=bits == 8
-                , llm_int8_skip_modules=["vision_proj", "depth_proj", "output", "ffn"]
+                , llm_int8_skip_modules=["output", "ffn"]
                 , llm_int8_threshold=6.0
                 , llm_int8_has_fp16_weight=False
-                , bnb_4bit_compute_dtype=torch.float16
+                , bnb_4bit_compute_dtype=torch.bfloat16
                 , bnb_4bit_use_double_quant=True
                 , bnb_4bit_quant_type="nf4"
+                , bnb_4bit_quant_storage=torch.bfloat16
             )
         }
     else:
         huggingface_config = {
-            "torch_dtype": torch.float16
+            "torch_dtype": torch.bfloat16
             , "low_cpu_mem_usage": True
             , "attn_implementation": "flash_attention_2"
         }

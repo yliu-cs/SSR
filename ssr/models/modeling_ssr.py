@@ -2,10 +2,13 @@ import torch
 from torch import nn
 from einops import rearrange
 from torch.amp import autocast
+from typing import Union, Tuple
+from ssr.utils.misc import freeze_module
 from ssr.utils.misc import build_projector
-from ssr.utils.misc import freeze_module, has_nan
+from peft import LoraConfig, get_peft_model
 from ssr.utils.prompt import SSRStage, SSRSpecialToken
 from ssr.utils.load_ptm import load_mamba, load_internlm3
+from .modeling_sinternlm3 import SSRCausalLMOutputWithPast
 from transformers import PretrainedConfig, PreTrainedModel, CLIPVisionModel, SiglipVisionModel
 
 
@@ -17,6 +20,9 @@ class SSRConfig(PretrainedConfig):
         , internlm3_path: str
         , bits: int
         , stage: SSRStage
+        , lora_r: int
+        , lora_alpha: int
+        , lora_dropout: float
         , device: torch.device
         , **kwargs
     ) -> None:
@@ -25,6 +31,9 @@ class SSRConfig(PretrainedConfig):
         self.internlm3_path = internlm3_path
         self.bits = bits
         self.stage = stage
+        self.lora_r = lora_r
+        self.lora_alpha = lora_alpha
+        self.lora_dropout = lora_dropout
         self.device = device
 
 
@@ -52,6 +61,16 @@ class SSR(PreTrainedModel):
         freeze_module(self.depth_encoder)
         if self.config.stage == SSRStage.mamba:
             freeze_module(self.internlm3)
+        elif self.config.stage == SSRStage.internlm:
+            lora_config = LoraConfig(
+                r=self.config.lora_r
+                , lora_alpha=self.config.lora_alpha
+                , target_modules="all-linear"
+                , lora_dropout=self.config.lora_dropout
+                , bias="none"
+                , task_type="CAUSAL_LM"
+            )
+            self.internlm3 = get_peft_model(self.internlm3, lora_config)
     
     def forward(
         self
@@ -60,11 +79,10 @@ class SSR(PreTrainedModel):
         , labels: torch.Tensor
         , image: torch.Tensor
         , depth: torch.Tensor
-    ):
-        image_mask = torch.zeros_like(input_ids).bool()
-        image_mask[torch.where(input_ids == self.image_token_id)] = True
+    ) -> Union[Tuple, SSRCausalLMOutputWithPast]:
         image_embeds = self.image_encoder(image).last_hidden_state[:, 1:, :]
         depth_embeds = self.depth_encoder(depth).last_hidden_state
+        print(f"{input_ids.size()=} {attention_mask.size()=} {labels.size()=} {image_embeds.size()=} {depth_embeds.size()=}")
         with autocast("cuda", enabled=False):
             mamba_outputs = self.mamba(
                 input_ids=input_ids
@@ -75,15 +93,13 @@ class SSR(PreTrainedModel):
         last_hidden_state = mamba_outputs.last_hidden_state
         tor_embeds = self.tor_proj(last_hidden_state[(input_ids == self.tor_token_id), :])
         tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
-        with autocast("cuda", enabled=True, dtype=torch.float16):
+        with autocast("cuda", enabled=True, dtype=torch.bfloat16):
             internlm_outputs = self.internlm3(
                 input_ids=input_ids
                 , image_embeds=self.internlm3_image_proj(image_embeds)
                 , depth_embeds=self.internlm3_depth_proj(depth_embeds)
                 , tor_embeds=tor_embeds
                 , attention_mask=attention_mask
-                , image_mask=image_mask
                 , labels=labels
             )
-        print(f"{internlm_outputs.loss=} {internlm_outputs.tor_embeds.dtype=}")
-        exit()
+        return internlm_outputs

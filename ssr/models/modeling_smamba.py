@@ -1,7 +1,5 @@
 import torch
-from einops import rearrange
 from dataclasses import dataclass
-from ssr.utils.misc import has_nan
 from typing import Tuple, Optional, Union
 from transformers import MambaForCausalLM
 from transformers.modeling_outputs import ModelOutput

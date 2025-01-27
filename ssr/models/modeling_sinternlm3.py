@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from transformers.cache_utils import Cache
 from typing import List, Tuple, Optional, Union
 from transformers.modeling_outputs import ModelOutput
-from ssr.utils.misc import build_projector, has_nan, get_grad
 from .modeling_internlm3 import Cache, Unpack, KwargsForCausalLM, InternLM3PreTrainedModel, InternLM3Model
 
 
@@ -64,7 +63,6 @@ class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
         depth_embeds: torch.FloatTensor = None,
         tor_embeds: torch.FloatTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
-        image_mask: torch.BoolTensor = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -81,14 +79,11 @@ class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
             self.merge_input_embeds_with_image_depth(image_embeds, depth_embeds, tor_embeds, inputs_embeds, input_ids)
-
         outputs = self.model(
             attention_mask=attention_mask,
-            image_mask=image_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
@@ -97,10 +92,8 @@ class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
         last_hidden_state = outputs.last_hidden_state
         logits = self.output(last_hidden_state)
-
         loss = None
         if labels is not None:
             if attention_mask is not None:
@@ -111,14 +104,11 @@ class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous()
             loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1).to(shift_logits.device))
-
         if not return_dict:
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
-
         tor_embeds = last_hidden_state[(input_ids == self.tor_token_id), :]
         tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
-
         return SSRCausalLMOutputWithPast(
             loss=loss,
             logits=logits,

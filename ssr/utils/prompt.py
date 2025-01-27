@@ -112,7 +112,7 @@ def create_labels(
     , tokenizer: Internlm3Tokenizer
 ) -> str:
     target = torch.tensor(
-        tokenizer.convert_tokens_to_ids(["<|im_start|>", "rational", "e", "\n"] if stage == SSRStage.mamba else ["<|im_start|>", "assistant", "\n"])
+        tokenizer.convert_tokens_to_ids(["<|im_start|>", "rational", "e", "\n"] if stage == SSRStage.mamba else ["<|im_start|>", "assi", "stant", "\n"])
         , device=input_ids.device
         , dtype=input_ids.dtype
     )

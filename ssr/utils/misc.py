@@ -28,9 +28,9 @@ def count_params(model: nn.Module) -> str:
         total_params += n_params
         if param.requires_grad:
             tunable_params += n_params
-    cnt_str = " || ".join([f"Tunable Parameters: {numerize(tunable_params)}"
-        , f"All Parameters: {numerize(total_params)}"
-        , f"Tunable%: {tunable_params / total_params * 100:.3f}%"
+    cnt_str = " || ".join([f"Tunable Parameters: {numerize(tunable_params):<10}"
+        , f"All Parameters: {numerize(total_params):<10}"
+        , f"Tunable Ratio: {tunable_params / total_params:.5f}"
     ])
     return cnt_str
 
