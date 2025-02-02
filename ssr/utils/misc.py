@@ -1,8 +1,11 @@
+import os
 import re
 import pytz
+import json
 import math
 import torch
 import warnings
+import matplotlib
 import numpy as np
 import transformers
 from torch import nn
@@ -54,7 +57,11 @@ def get_chunk(lst: List, n: int, k: int) -> List[Any]:
     return chunks[k]
 
 
-def convert_depth(depth: Union[np.ndarray, torch.Tensor], convert_16bits: bool = True):
+def convert_depth(
+    depth: Union[np.ndarray, torch.Tensor]
+    , convert_16bits: bool = True
+    , convert_3channels: bool = True
+) -> Image.Image:
     if convert_16bits:
         if isinstance(depth, torch.Tensor):
             depth = depth.squeeze().cpu().numpy()
@@ -63,18 +70,35 @@ def convert_depth(depth: Union[np.ndarray, torch.Tensor], convert_16bits: bool =
         depth = depth * 1000
         depth = depth.astype(np.uint16)
         depth = Image.fromarray(depth)
-    channels = len(depth.getbands())
-    if channels == 1:
-        img = np.array(depth)
-        height, width = img.shape
-        three_channel_array = np.zeros((height, width, 3), dtype=np.uint8)
-        three_channel_array[:, :, 0] = (img // 1024) * 4
-        three_channel_array[:, :, 1] = (img // 32) * 8
-        three_channel_array[:, :, 2] = (img % 32) * 8
-        depth = Image.fromarray(three_channel_array, "RGB")
+    if convert_3channels:
+        channels = len(depth.getbands())
+        if channels == 1:
+            img = np.array(depth)
+            height, width = img.shape
+            three_channel_array = np.zeros((height, width, 3), dtype=np.uint8)
+            three_channel_array[:, :, 0] = (img // 1024) * 4
+            three_channel_array[:, :, 1] = (img // 32) * 8
+            three_channel_array[:, :, 2] = (img % 32) * 8
+            depth = Image.fromarray(three_channel_array, "RGB")
     return depth
 
-    
+
+def visualize_depth(
+    depth: Union[torch.Tensor, np.ndarray]
+    , cmap: matplotlib.colors.LinearSegmentedColormap = matplotlib.colormaps.get_cmap("Spectral_r")
+) -> np.ndarray:
+    if not isinstance(depth, np.ndarray):
+        if isinstance(depth, torch.Tensor):
+            depth = depth.cpu()
+        depth = np.array(depth)
+    if depth.ndim == 3:
+        depth = depth.squeeze()
+    d_min, d_max = np.min(depth), np.max(depth)
+    depth_relative = (depth - d_min) / (d_max - d_min)
+    colored = (cmap(depth_relative)[..., :3] * 255).astype(np.uint8)
+    return colored
+
+
 def build_projector(mm_hidden_size: int = 1024, hidden_size: int = 4096) -> nn.Sequential:
     projector_type = "mlp2x_gelu"
     mlp_gelu_match = re.match(r"^mlp(\d+)x_gelu$", projector_type)
@@ -105,3 +129,15 @@ def get_grad(model: nn.Module) -> float:
             grad += param_norm.item() ** 2
     grad = grad ** 0.5
     return grad
+
+
+def load_jsonl(file_path: str) -> List[Any]:
+    lst = []
+    with open(file_path, "r", encoding="utf-8") as file:
+        for line in file:
+            lst.append(json.loads(line.strip()))
+    return lst
+
+
+def change_ext(file_path: str, tgt_ext: str):
+    return f"{os.path.splitext(file_path)[0]}.{tgt_ext}"

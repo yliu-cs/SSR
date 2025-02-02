@@ -51,6 +51,7 @@ def prepare_vrc(
                 images=convert_depth(
                     load_depth(image=image, depth_pro=depth_pro, depth_transform=depth_transform)
                     , convert_16bits=True
+                    , convert_3channels=True
                 )
                 , return_tensors="pt"
             ).pixel_values

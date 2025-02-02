@@ -60,11 +60,17 @@ def load_mamba(model_path: str, device: torch.device) -> SSRMambaForCausalLM:
 
 
 def load_clip_vit(model_path: str, device: torch.device) -> Tuple[CLIPProcessor, CLIPVisionModel]:
-    return CLIPProcessor.from_pretrained(model_path), CLIPVisionModel.from_pretrained(model_path, device_map=device)
+    return (
+        CLIPProcessor.from_pretrained(model_path)
+        , CLIPVisionModel.from_pretrained(model_path, output_hidden_states=True, device_map=device)
+    )
 
 
 def load_siglip(model_path: str, device: torch.device) -> Tuple[SiglipProcessor, SiglipVisionModel]:
-    return SiglipProcessor.from_pretrained(model_path), SiglipVisionModel.from_pretrained(model_path, device_map=device)
+    return (
+        SiglipProcessor.from_pretrained(model_path)
+        , SiglipVisionModel.from_pretrained(model_path, output_hidden_states=True, device_map=device)
+    )
 
 
 def load_depth_pro(model_path: str, device: torch.device) -> Tuple[DepthPro, Compose]:

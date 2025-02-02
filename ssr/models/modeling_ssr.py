@@ -80,9 +80,9 @@ class SSR(PreTrainedModel):
         , image: torch.Tensor
         , depth: torch.Tensor
     ) -> Union[Tuple, SSRCausalLMOutputWithPast]:
-        image_embeds = self.image_encoder(image).last_hidden_state[:, 1:, :]
-        depth_embeds = self.depth_encoder(depth).last_hidden_state
-        print(f"{input_ids.size()=} {attention_mask.size()=} {labels.size()=} {image_embeds.size()=} {depth_embeds.size()=}")
+        image_embeds = self.image_encoder(image).hidden_states[-2][:, 1:, :]
+        depth_embeds = self.depth_encoder(depth).hidden_states[-1][:, :, :]
+        # print(f"{input_ids.size()=} {attention_mask.size()=} {labels.size()=} {image_embeds.size()=} {depth_embeds.size()=}")
         with autocast("cuda", enabled=False):
             mamba_outputs = self.mamba(
                 input_ids=input_ids
