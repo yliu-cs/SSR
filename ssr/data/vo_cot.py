@@ -13,15 +13,16 @@ from ssr.utils.misc import convert_depth, get_chunk, change_ext
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "OpenSpatialDataset"))
+    parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VoCoT"))
     parser.add_argument("--model_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "DepthPro", "depth_pro.pt"))
-    parser.add_argument("--num_chunk", type=int, default=24)
+    parser.add_argument("--num_chunk", type=int, default=16)
     parser.add_argument("--chunk_idx", type=int, default=0)
-    parser.add_argument("--max_workers", type=int, default=15)
+    parser.add_argument("--max_workers", type=int, default=20)
     args = parser.parse_args()
 
     def save_image2depth(image_path: str, model: depth_pro.depth_pro.DepthPro, transform: Compose, device: torch.device) -> None:
-        depth_path = os.sep.join(image_path.split(os.sep)[:-2] + [f"{image_path.split(os.sep)[-2]}_d"] + image_path.split(os.sep)[-1:])
+        depth_path = os.sep.join([f"{image_path.split(os.sep)[0]}_d"] + image_path.split(os.sep)[1:])
+        image_path, depth_path = (os.path.join(args.data_dir, "images", path) for path in (image_path, depth_path))
         depth_path = change_ext(depth_path, "png")
         if os.path.exists(depth_path):
             return
@@ -40,9 +41,12 @@ if __name__ == "__main__":
     model, transform = depth_pro.create_model_and_transforms(checkpoint_uri=args.model_path, device=device)
     model.eval()
 
-    open_sr_data = json.load(open(os.path.join(args.data_dir, "result_10_depth_convs.json"), "r"))
-    open_sr_data = get_chunk(open_sr_data, n=args.num_chunk, k=args.chunk_idx)
-    open_sr_data = list(map(lambda x: os.path.join(args.data_dir, "open-images", f"{x['filename']}.jpg"), open_sr_data))
+    with open(os.path.join(args.data_dir, "VoCoT-80K_integrated.json"), "r", encoding="utf-8") as file:
+        vo_cot_data = json.load(file)
+    vo_cot_data = get_chunk(vo_cot_data, n=args.num_chunk, k=args.chunk_idx)
+    vo_cot_data = list(map(lambda x: x["image"], vo_cot_data))
+    vo_cot_data = list(map(lambda x: x.replace(os.path.join("COCO2015", "images", "train2014"), "COCO"), vo_cot_data))
+    vo_cot_data = list(map(lambda x: x.replace(os.path.join("LVIS", "train2017"), "LVIS"), vo_cot_data))
     thread_map(
         partial(
             save_image2depth
@@ -50,7 +54,7 @@ if __name__ == "__main__":
             , transform=transform
             , device=device
         )
-        , open_sr_data
+        , vo_cot_data
         , max_workers=args.max_workers
-        , desc=f"[{args.chunk_idx + 1}/{args.num_chunk}] Preprocess Open Spatial Dataset"
+        , desc=f"[{args.chunk_idx + 1}/{args.num_chunk}] Preprocess VoCoT Dataset"
     )

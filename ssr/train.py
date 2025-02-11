@@ -31,7 +31,6 @@ class ModelArguments:
 @dataclass
 class DataArguments:
     cot_data_dirs: list[str] = field(default_factory=lambda: [
-        # os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VRC-Bench")
         os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "LLaVA-CoT-100k")
         , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "Visual-CoT")
         , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VoCoT")
