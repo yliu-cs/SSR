@@ -14,9 +14,9 @@ from ssr.utils.prompt import SSRStage
 from dataclasses import dataclass, field
 from ssr.models.modeling_ssr import SSR, SSRConfig
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+from ssr.utils.load_ptm import load_clip_vit, load_siglip
 from ssr.data.data import prepare_ssr_dataset, SSRDataCollator
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
-from ssr.utils.load_ptm import load_clip_vit, load_siglip, load_depth_pro
 
 
 @dataclass
@@ -30,8 +30,11 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
-    cot_data_names: list[str] = field(default_factory=lambda: [
-        os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VRC-Bench")
+    cot_data_dirs: list[str] = field(default_factory=lambda: [
+        # os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VRC-Bench")
+        os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "LLaVA-CoT-100k")
+        , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "Visual-CoT")
+        , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VoCoT")
     ])
     n_tor: int = field(default=10)
     n_image_tokens: int = field(default=(336 // 14) ** 2)
@@ -41,7 +44,7 @@ class DataArguments:
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
     bits: int = field(default=4)
-    stage: str = field(default="SSRStage.mamba")
+    stage: str = field(default=SSRStage.mamba)
     bf16: bool = field(default=False)
     fp16: bool = field(default=False)
     lora_r: int = field(default=64)
@@ -79,8 +82,6 @@ def train() -> None:
     clip_processor, clip_vision = load_clip_vit(model_args.clip_path, device=training_args.device)
     rank0_print(training_args.local_rank, f"{str_datetime()} Loading SigLIP ...")
     siglip_processor, siglip = load_siglip(model_args.siglip_path, device=training_args.device)
-    rank0_print(training_args.local_rank, f"{str_datetime()} Loading DepthPro ...")
-    depth_pro, depth_transform = load_depth_pro(model_args.depth_pro_path, device=training_args.device)
 
     rank0_print(training_args.local_rank, f"{str_datetime()} Loading SSR ...")
     ssr = SSR(
@@ -157,11 +158,9 @@ def train() -> None:
         model=ssr
         , args=training_args
         , train_dataset=prepare_ssr_dataset(
-            data_args.cot_data_names
+            data_args.cot_data_dirs
             , clip_processor=clip_processor
             , siglip_processor=siglip_processor
-            , depth_pro=depth_pro
-            , depth_transform=depth_transform
         )
         , data_collator=SSRDataCollator(
             stage=training_args.stage

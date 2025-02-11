@@ -1,13 +1,73 @@
 import os
+import re
 import torch
 import autoroot
 import depth_pro
+import numpy as np
 from PIL import Image
+from typing import Tuple
 from functools import partial
 from argparse import ArgumentParser
+from torch.utils.data import Dataset
+from ssr.data.data import SSRSpecialToken
 from torchvision.transforms import Compose
 from tqdm.contrib.concurrent import thread_map
+from transformers import CLIPProcessor, SiglipVisionModel
 from ssr.utils.misc import convert_depth, load_jsonl, get_chunk, change_ext
+
+
+def parse_special_tokens(text: str) -> Tuple[str, str]:
+    answer_match = re.search(r"<CONCLUSION>(.*?)</CONCLUSION>", text, re.DOTALL)
+    answer = answer_match.group(1).strip() if answer_match else None
+    text_without_answer = re.sub(r"<CONCLUSION>.*?</CONCLUSION>", "", text, flags=re.DOTALL)
+    rationale = re.sub(r"<\/?[A-Z]+>", "", text_without_answer)
+    rationale = re.sub(r"\s+", " ", rationale).strip()
+    if answer:
+        answer = re.sub(r"\s+", " ", answer).strip()
+    return rationale, answer
+
+
+class LLaVACoTDataset(Dataset):
+    def __init__(
+        self
+        , data_dir: str
+        , clip_processor: CLIPProcessor
+        , siglip_processor: SiglipVisionModel
+    ):
+        self.data_dir = data_dir
+        self.clip_processor = clip_processor
+        self.siglip_processor = siglip_processor
+        self.data = load_jsonl(os.path.join(data_dir, "train.jsonl"))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        image_path = os.path.join(self.data_dir, item["image"])
+        image = Image.open(image_path).convert("RGB")
+        conversations = item["conversations"]
+        question, rationale, answer = None, None, None
+        for conv in conversations:
+            if conv["from"] == "human":
+                question = conv["value"]
+            else:
+                rationale, answer = parse_special_tokens(conv["value"])
+            if question and rationale and answer:
+                break
+        question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
+        image = (self.clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
+        depth_path = os.sep.join([self.data_dir] + [f"{item['image'].split(os.sep)[0]}_d"] + item["image"].split(os.sep)[1:])
+        depth_path = change_ext(depth_path, "png")
+        depth = convert_depth(np.array(Image.open(depth_path)), convert_16bits=True, convert_3channels=True)
+        depth = (self.siglip_processor(images=depth, return_tensors="pt").pixel_values).squeeze(0)
+        return {
+            "question": question
+            , "rationale": rationale
+            , "answer": answer
+            , "image": image
+            , "depth": depth
+        }
 
 
 if __name__ == "__main__":
