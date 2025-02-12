@@ -1,0 +1,98 @@
+import os
+import json
+import base64
+import autoroot
+from tqdm import tqdm
+from openai import OpenAI
+from typing import Dict, Any
+from argparse import ArgumentParser
+from ssr.utils.misc import get_chunk
+from tqdm.contrib.concurrent import thread_map
+
+
+GEN_CoT_PROMPT = lambda question, answer: f"""I have an image and a question that I want you to answer.
+I need you to strictly follow the format with four specific sections: summary, caption, reasoning, and conclusion.
+It is crucial that you adhere to this structure exactly as outlined and that the final answer in the conclusion matches the standard correct answer precisely.
+To explain further:
+    - In summary, briefly explain what steps you'll take to solve the problem.
+    - In caption, describe the contents of the image, specifically focusing on details relevant to the question.
+    - In reasoning, outline a step-by-step thought process you would use to solve the problem based on the image.
+    - In conclusion, give the final answer in a direct format, and it must match the correct answer exactly. If it's a multiple choice question, the conclusion should only include the option without repeating what the option is.
+Finally, integrate these sections into a natural thinking paragraph.
+
+Here's the question and answer:
+Question: {question}
+Answer: {answer}
+"""
+
+
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "SpatialQA"))
+    parser.add_argument("--mode", type=str, default="gen_rationale", choices=["preprocess", "gen_rationale"])
+    parser.add_argument("--max_workers", type=int, default=50)
+    args = parser.parse_args()
+
+    if args.mode == "preprocess" and not os.path.exists(os.path.join(args.data_dir, "SSR_SpatialQA.json")):
+        with open(os.path.join(args.data_dir, "SpatialQA.json"), "r") as f:
+            raw_data = json.load(f)
+        data = []
+        for raw_item in tqdm(raw_data, desc="Convert SpatialQA", ncols=100):
+            if "image" in raw_item and len(raw_item["image"]) == 1 and "conversations" in raw_item and len(raw_item["conversations"]) % 2 == 0:
+                item = raw_item.copy()
+                item["image"] = item["image"][0]
+                for i in range(0, len(item["conversations"]), 2):
+                    question = item["conversations"][i]["value"]
+                    answer = item["conversations"][i + 1]["value"]
+                    question = question.replace("<image 1>\n", "")
+                    item["question"] = question
+                    item["answer"] = answer
+                    data.append(item)
+        with open(os.path.join(args.data_dir, "SSR_SpatialQA.json"), "w") as f:
+            json.dump(data, f, indent=4)
+    elif args.mode == "gen_rationale":
+        gpt = OpenAI(base_url="https://pro.aiskt.com/v1", api_key="sk-5uKEnZOEtCv0VxrlB2502d5e93594b87977490Ac7f6a23F4")
+
+        def encode_image(image_path: str) -> str:
+            with open(image_path, "rb") as image_file:
+                return base64.b64encode(image_file.read()).decode("utf-8")
+
+        def gen_rationale(item: Dict[str, Any]) -> str:
+            image_path, question, answer = (item[key] for key in ["image", "question", "answer"])
+            image_path = os.path.join(args.data_dir, "images", image_path)
+            completion = gpt.chat.completions.create(
+                model="gpt-4o-mini"
+                , messages=[
+                    {
+                        "role": "user"
+                        , "content": [
+                            {"type": "text", "text": f"{GEN_CoT_PROMPT(question, answer)}"}
+                            , {
+                                "type":"image_url"
+                                , "image_url": {
+                                    "url": f"data:image/png;base64,{encode_image(image_path)}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            )
+            rationale = completion.choices[0].message.content
+            return {
+                "question": question
+                , "rationale": rationale
+                , "answer": answer
+                , "image_path": image_path
+            }
+        
+        with open(os.path.join(args.data_dir, "SSR_SpatialQA.json"), "r") as f:
+            spatial_qa_data = json.load(f)
+        
+        spatialqa_cot_data = thread_map(
+            gen_rationale
+            , spatial_qa_data
+            , max_workers=args.max_workers
+            , desc="Generate SpatialQA Rationale"
+        )
+        with open(os.path.join(args.data_dir, "SpatialQA_CoT.json"), "w") as f:
+            json.dump(spatialqa_cot_data, f, indent=4)
