@@ -29,8 +29,10 @@ Answer: {answer}
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "SpatialQA"))
-    parser.add_argument("--mode", type=str, default="gen_rationale", choices=["preprocess", "gen_rationale"])
-    parser.add_argument("--max_workers", type=int, default=50)
+    parser.add_argument("--mode", type=str, default="preprocess", choices=["preprocess", "gen_rationale"])
+    parser.add_argument("--num_chunk", type=int, default=2)
+    parser.add_argument("--chunk_idx", type=int, default=0)
+    parser.add_argument("--max_workers", type=int, default=15)
     args = parser.parse_args()
 
     if args.mode == "preprocess" and not os.path.exists(os.path.join(args.data_dir, "SSR_SpatialQA.json")):
@@ -87,6 +89,7 @@ if __name__ == "__main__":
         
         with open(os.path.join(args.data_dir, "SSR_SpatialQA.json"), "r") as file:
             spatial_qa_data = json.load(file)
+        spatial_qa_data = get_chunk(spatial_qa_data, args.num_chunk, args.chunk_idx)
         
         spatialqa_cot_data = thread_map(
             gen_rationale
@@ -94,5 +97,5 @@ if __name__ == "__main__":
             , max_workers=args.max_workers
             , desc="Generate SpatialQA Rationale"
         )
-        with open(os.path.join(args.data_dir, "SpatialQA_CoT.json"), "w") as file:
+        with open(os.path.join(args.data_dir, f"SpatialQA_CoT_{args.chunk_idx}_{args.num_chunk}.json"), "w") as file:
             json.dump(spatialqa_cot_data, file, indent=4)
