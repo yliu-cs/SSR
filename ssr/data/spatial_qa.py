@@ -34,8 +34,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "preprocess" and not os.path.exists(os.path.join(args.data_dir, "SSR_SpatialQA.json")):
-        with open(os.path.join(args.data_dir, "SpatialQA.json"), "r") as f:
-            raw_data = json.load(f)
+        with open(os.path.join(args.data_dir, "SpatialQA.json"), "r") as file:
+            raw_data = json.load(file)
         data = []
         for raw_item in tqdm(raw_data, desc="Convert SpatialQA", ncols=100):
             if "image" in raw_item and len(raw_item["image"]) == 1 and "conversations" in raw_item and len(raw_item["conversations"]) % 2 == 0:
@@ -48,8 +48,8 @@ if __name__ == "__main__":
                     item["question"] = question
                     item["answer"] = answer
                     data.append(item)
-        with open(os.path.join(args.data_dir, "SSR_SpatialQA.json"), "w") as f:
-            json.dump(data, f, indent=4)
+        with open(os.path.join(args.data_dir, "SSR_SpatialQA.json"), "w") as file:
+            json.dump(data, file, indent=4)
     elif args.mode == "gen_rationale":
         gpt = OpenAI(base_url="https://pro.aiskt.com/v1", api_key="sk-5uKEnZOEtCv0VxrlB2502d5e93594b87977490Ac7f6a23F4")
 
@@ -85,8 +85,8 @@ if __name__ == "__main__":
                 , "image_path": image_path
             }
         
-        with open(os.path.join(args.data_dir, "SSR_SpatialQA.json"), "r") as f:
-            spatial_qa_data = json.load(f)
+        with open(os.path.join(args.data_dir, "SSR_SpatialQA.json"), "r") as file:
+            spatial_qa_data = json.load(file)
         
         spatialqa_cot_data = thread_map(
             gen_rationale
@@ -94,5 +94,5 @@ if __name__ == "__main__":
             , max_workers=args.max_workers
             , desc="Generate SpatialQA Rationale"
         )
-        with open(os.path.join(args.data_dir, "SpatialQA_CoT.json"), "w") as f:
-            json.dump(spatialqa_cot_data, f, indent=4)
+        with open(os.path.join(args.data_dir, "SpatialQA_CoT.json"), "w") as file:
+            json.dump(spatialqa_cot_data, file, indent=4)
