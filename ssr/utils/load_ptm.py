@@ -1,7 +1,7 @@
 import os
 import torch
 import depth_pro
-from typing import Tuple
+from typing import Tuple, Dict
 from depth_pro.depth_pro import DepthPro
 from ssr.utils.misc import freeze_module
 from torchvision.transforms import Compose
@@ -12,7 +12,7 @@ from ssr.models.modeling_sinternlm3 import SSRInternlm3ForCausalLM
 from transformers import BitsAndBytesConfig, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel
 
 
-def load_internlm3(model_path: str, bits: int, device: torch.device) -> Tuple[SSRInternlm3ForCausalLM, Internlm3Tokenizer]:
+def load_internlm3(model_path: str, bits: int, add_special_tokens: bool = True) -> Tuple[SSRInternlm3ForCausalLM, Internlm3Tokenizer]:
     # Huggingface Model Configuration with Bit quantization
     if bits in [4, 8]:
         huggingface_config = {
@@ -38,38 +38,40 @@ def load_internlm3(model_path: str, bits: int, device: torch.device) -> Tuple[SS
             , "attn_implementation": "flash_attention_2"
         }
     # Loading Backbone Model
-    ssr = SSRInternlm3ForCausalLM.from_pretrained(model_path, **huggingface_config, device_map=device)
+    ssr_internlm3 = SSRInternlm3ForCausalLM.from_pretrained(model_path, **huggingface_config)
     # Loading SSR Tokenizer & Adding <image> & <depth> & <tor> Special Token
     ssr_tokenizer = Internlm3Tokenizer.from_pretrained(model_path, padding_side="left")
-    ssr_tokenizer.add_tokens(SSRSpecialToken.IMAGE_TOKEN, special_tokens=True)
-    ssr_tokenizer.add_tokens(SSRSpecialToken.DEPTH_TOKEN, special_tokens=True)
-    ssr_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
-    return ssr, ssr_tokenizer
+    if add_special_tokens:
+        ssr_tokenizer.add_tokens(SSRSpecialToken.IMAGE_TOKEN, special_tokens=True)
+        ssr_tokenizer.add_tokens(SSRSpecialToken.DEPTH_TOKEN, special_tokens=True)
+        ssr_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
+    return ssr_internlm3, ssr_tokenizer
 
 
-def load_mamba(model_path: str, device: torch.device) -> SSRMambaForCausalLM:
+def load_mamba(model_path: str) -> SSRMambaForCausalLM:
     # Huggingface Model Configuration
     huggingface_config = {
         "ignore_mismatched_sizes": True
         , "torch_dtype": torch.float32
         , "low_cpu_mem_usage": True
     }
+
     # SSR Mamba Model (no fp32)
-    smamba = SSRMambaForCausalLM.from_pretrained(model_path, **huggingface_config, device_map=device)
+    smamba = SSRMambaForCausalLM.from_pretrained(model_path, **huggingface_config)
     return smamba
 
 
-def load_clip_vit(model_path: str, device: torch.device) -> Tuple[CLIPProcessor, CLIPVisionModel]:
+def load_clip_vit(model_path: str) -> Tuple[CLIPProcessor, CLIPVisionModel]:
     return (
         CLIPProcessor.from_pretrained(model_path)
-        , CLIPVisionModel.from_pretrained(model_path, output_hidden_states=True, device_map=device)
+        , CLIPVisionModel.from_pretrained(model_path, output_hidden_states=True)
     )
 
 
-def load_siglip(model_path: str, device: torch.device) -> Tuple[SiglipProcessor, SiglipVisionModel]:
+def load_siglip(model_path: str) -> Tuple[SiglipProcessor, SiglipVisionModel]:
     return (
         SiglipProcessor.from_pretrained(model_path)
-        , SiglipVisionModel.from_pretrained(model_path, output_hidden_states=True, device_map=device)
+        , SiglipVisionModel.from_pretrained(model_path, output_hidden_states=True)
     )
 
 

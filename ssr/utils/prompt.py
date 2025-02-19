@@ -1,13 +1,8 @@
 import re
 import torch
 from typing import List
-from enum import Enum, StrEnum
+from enum import StrEnum
 from ssr.models.tokenization_internlm3 import Internlm3Tokenizer
-
-
-class SSRStage(Enum):
-    mamba = 1
-    internlm = 2
 
 
 class SSRSpecialToken(StrEnum):
@@ -91,15 +86,15 @@ def construct_conversation(
     question: str
     , rationale: str = ""
     , answer: str = ""
-    , stage: SSRStage = SSRStage.mamba
+    , stage: int = 1
     , n_tor: int = 10
 ) -> str:
     messages = []
-    if stage != SSRStage.mamba:
+    if stage != 1:
         messages.append({"role": "system", "content": "\n".join([SYSTEM_PROMPT, "You should give helpful answer to user based on the rationale."])})
     messages.append({"role": "user", "content": question})
     messages.append({"role": "rationale", "content": insert_tor(rationale, n_tor)})
-    if stage == SSRStage.internlm:
+    if stage == 2:
         messages.append({"role": "assistant", "content": answer})
     conv = "\n".join([f"{SSRSpecialToken.BOR_TOKEN}{msg['role']}\n{msg['content']}{SSRSpecialToken.EOR_TOKEN}" for msg in messages])
     conv = SSRSpecialToken.BOS_TOKEN + conv + SSRSpecialToken.EOS_TOKEN
@@ -108,11 +103,11 @@ def construct_conversation(
 
 def create_labels(
     input_ids: torch.Tensor
-    , stage: SSRStage
+    , stage: int
     , tokenizer: Internlm3Tokenizer
 ) -> str:
     target = torch.tensor(
-        tokenizer.convert_tokens_to_ids(["<|im_start|>", "rational", "e", "\n"] if stage == SSRStage.mamba else ["<|im_start|>", "assi", "stant", "\n"])
+        tokenizer.convert_tokens_to_ids(["<|im_start|>", "rational", "e", "\n"] if stage == 1 else ["<|im_start|>", "assi", "stant", "\n"])
         , device=input_ids.device
         , dtype=input_ids.dtype
     )
@@ -133,5 +128,5 @@ if __name__ == "__main__":
     answer = "2004"
     # print(f"{insert_tor(rationale, n_tor=10)}")
     # print(f"{insert_tor('', n_tor=10)}")
-    print(f"{construct_conversation(question=question, rationale=rationale, answer=answer, stage=SSRStage.mamba, n_tor=10)=}")
-    print(f"{construct_conversation(question=question, rationale=rationale, answer=answer, stage=SSRStage.internlm, n_tor=10)=}")
+    print(f"{construct_conversation(question=question, rationale=rationale, answer=answer, stage=1, n_tor=10)=}")
+    print(f"{construct_conversation(question=question, rationale=rationale, answer=answer, stage=2, n_tor=10)=}")

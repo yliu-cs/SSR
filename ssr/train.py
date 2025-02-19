@@ -10,7 +10,6 @@ from ssr.utils.misc import (
     , str_datetime
 )
 from transformers import Trainer
-from ssr.utils.prompt import SSRStage
 from dataclasses import dataclass, field
 from ssr.models.modeling_ssr import SSR, SSRConfig
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
@@ -26,6 +25,7 @@ class ModelArguments:
     clip_path: str = field(default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "clip-vit-large-patch14-336"))
     siglip_path: str = field(default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "siglip-so400m-patch14-384"))
     depth_pro_path: str = field(default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "DepthPro"))
+    stage1_path: str = field(default=os.path.join(os.getcwd(), "checkpoint", "SSR", "stage1"))
 
 
 @dataclass
@@ -34,6 +34,7 @@ class DataArguments:
         os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "LLaVA-CoT-100k")
         , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "Visual-CoT")
         , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VoCoT")
+        , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "SpatialQA")
     ])
     n_tor: int = field(default=10)
     n_image_tokens: int = field(default=(336 // 14) ** 2)
@@ -43,7 +44,7 @@ class DataArguments:
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
     bits: int = field(default=4)
-    stage: str = field(default=SSRStage.mamba)
+    stage: int = field(default=1)
     bf16: bool = field(default=False)
     fp16: bool = field(default=False)
     lora_r: int = field(default=64)
@@ -51,9 +52,9 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_dropout: float = field(default=0.1)
     fsdp_proj_mp: dict = field(
         default_factory=lambda: {
-            "param_dtype": "float32",
-            "reduce_dtype": "float32",
-            "buffer_dtype": "float32",
+            "param_dtype": "bfloat16",
+            "reduce_dtype": "bfloat16",
+            "buffer_dtype": "bfloat16",
         }
     )
     fsdp_mamba_mp: dict = field(
@@ -75,28 +76,31 @@ class TrainingArguments(transformers.TrainingArguments):
 def train() -> None:
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    training_args.stage = eval(training_args.stage)
 
     rank0_print(training_args.local_rank, f"{str_datetime()} Loading CLIPVisionModel ...")
-    clip_processor, clip_vision = load_clip_vit(model_args.clip_path, device=training_args.device)
+    clip_processor, clip_vision = load_clip_vit(model_args.clip_path)
     rank0_print(training_args.local_rank, f"{str_datetime()} Loading SigLIP ...")
-    siglip_processor, siglip = load_siglip(model_args.siglip_path, device=training_args.device)
+    siglip_processor, siglip = load_siglip(model_args.siglip_path)
 
     rank0_print(training_args.local_rank, f"{str_datetime()} Loading SSR ...")
+    ssr_config = SSRConfig(
+        mamba_path=model_args.mamba_path
+        , internlm3_path=model_args.internlm3_path
+        , bits=training_args.bits
+        , stage=training_args.stage
+        , lora_r=training_args.lora_r
+        , lora_alpha=training_args.lora_alpha
+        , lora_dropout=training_args.lora_dropout
+    )
+    if training_args.stage != 1:
+        ssr_config.stage = training_args.stage
+        setattr(ssr_config, f"stage{training_args.stage - 1}_path", getattr(model_args, f"stage{training_args.stage - 1}_path"))
     ssr = SSR(
-        SSRConfig(
-            mamba_path=model_args.mamba_path
-            , internlm3_path=model_args.internlm3_path
-            , bits=training_args.bits
-            , stage=training_args.stage
-            , lora_r=training_args.lora_r
-            , lora_alpha=training_args.lora_alpha
-            , lora_dropout=training_args.lora_dropout
-            , device=training_args.device
-        )
+        config=ssr_config
         , clip_vision=clip_vision
         , siglip=siglip
     )
+    ssr.prepare_modules()
     rank0_print(training_args.local_rank, f"{str_datetime()} {'SSR':<30} {count_params(ssr)}")
     rank0_print(training_args.local_rank, f"{str_datetime()} {'Image Encoder':<30} {count_params(ssr.image_encoder)}")
     rank0_print(training_args.local_rank, f"{str_datetime()} {'Depth Encoder':<30} {count_params(ssr.depth_encoder)}")
@@ -173,10 +177,18 @@ def train() -> None:
     trainer.save_state()
     torch.cuda.synchronize()
     if training_args.local_rank == 0:
-        ssr.config.save_pretrained(training_args.output_dir)
-        ssr.tokenizer.save_pretrained(training_args.output_dir)
-    trainer.save_model(training_args.output_dir)
-
+        unwrapped_model = trainer.accelerator.unwrap_model(trainer.model)
+        unwrapped_model.config.save_pretrained(training_args.output_dir)
+        unwrapped_model.tokenizer.save_pretrained(os.path.join(training_args.output_dir, "internlm3"))
+        for module_name in ["mamba", "internlm3", "mamba_image_proj", "mamba_depth_proj", "tor_proj", "internlm3_image_proj", "internlm3_depth_proj"]:
+            module = getattr(unwrapped_model, module_name)
+            module_path = os.path.join(training_args.output_dir, module_name)
+            module.save_pretrained(
+                module_path
+                , state_dict=trainer.accelerator.get_state_dict(module)
+                , safe_serialization=trainer.args.save_safetensors
+            )
+        
 
 if __name__ == "__main__":
     init()

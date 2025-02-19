@@ -28,7 +28,7 @@ class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
         super().__init__(config)
         self.model = InternLM3Model(config)
         self.vocab_size = config.vocab_size
-        self.output = nn.Linear(config.hidden_size, config.vocab_size - 2, bias=False)
+        self.output = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.max_length = config.max_length
         self.post_init()
     

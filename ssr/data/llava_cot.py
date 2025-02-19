@@ -5,12 +5,12 @@ import autoroot
 import depth_pro
 import numpy as np
 from PIL import Image
-from typing import Tuple
+from typing import Tuple, Any
 from functools import partial
 from argparse import ArgumentParser
 from torch.utils.data import Dataset
-from ssr.data.data import SSRSpecialToken
 from torchvision.transforms import Compose
+from ssr.utils.prompt import SSRSpecialToken
 from tqdm.contrib.concurrent import thread_map
 from transformers import CLIPProcessor, SiglipVisionModel
 from ssr.utils.misc import convert_depth, load_jsonl, get_chunk, change_ext
@@ -33,16 +33,16 @@ class LLaVACoTDataset(Dataset):
         , data_dir: str
         , clip_processor: CLIPProcessor
         , siglip_processor: SiglipVisionModel
-    ):
+    ) -> None:
         self.data_dir = data_dir
         self.clip_processor = clip_processor
         self.siglip_processor = siglip_processor
         self.data = load_jsonl(os.path.join(data_dir, "train.jsonl"))
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.data)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Any:
         item = self.data[idx]
         image_path = os.path.join(self.data_dir, item["image"])
         image = Image.open(image_path).convert("RGB")
@@ -88,7 +88,11 @@ if __name__ == "__main__":
         depth_dir = os.path.dirname(depth_path)
         if not os.path.exists(depth_dir):
             os.makedirs(depth_dir, exist_ok=True)
-        image = Image.open(image_path).convert("RGB")
+        try:
+            image = Image.open(image_path).convert("RGB")
+        except Exception as e:
+            print(f"{e=}")
+            return
         image, _, f_px = depth_pro.load_pil(image)
         image = transform(image)
         image = image.to(device)

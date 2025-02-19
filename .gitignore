@@ -1,3 +1,6 @@
 test
 media
 checkpoint
+.DS_Store
+._.DS_Store
+train_tiny.sh

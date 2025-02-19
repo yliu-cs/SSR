@@ -14,7 +14,7 @@ torchrun \
     --output_dir ./checkpoint/SSR/stage1 \
     --per_device_train_batch_size 4 \
     --remove_unused_columns False \
-    --stage SSRStage.mamba \
+    --stage 1 \
     --eval_strategy no \
     --save_strategy steps \
     --save_steps 1000 \
@@ -24,6 +24,10 @@ torchrun \
     --lr_scheduler_type cosine \
     --warmup_steps 400 \
     --logging_steps 1 \
+    --dataloader_num_workers 60 \
+    --dataloader_pin_memory True \
+    --dataloader_persistent_workers True \
+    --dataloader_prefetch_factor 2 \
     --report_to none
 
 
@@ -37,7 +41,7 @@ torchrun \
     --output_dir ./checkpoint/SSR/stage2 \
     --per_device_train_batch_size 2 \
     --remove_unused_columns False \
-    --stage SSRStage.internlm \
+    --stage 2 \
     --eval_strategy no \
     --save_strategy steps \
     --save_steps 1000 \
@@ -47,4 +51,8 @@ torchrun \
     --lr_scheduler_type cosine \
     --warmup_steps 400 \
     --logging_steps 1 \
+    --dataloader_num_workers 60 \
+    --dataloader_pin_memory True \
+    --dataloader_persistent_workers True \
+    --dataloader_prefetch_factor 2 \
     --report_to none

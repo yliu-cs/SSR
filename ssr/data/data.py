@@ -1,25 +1,27 @@
 import os
 import torch
-from typing import List
-from functools import partial
+from typing import List, Dict
 from dataclasses import dataclass
-from datasets import load_dataset
-from depth_pro.depth_pro import DepthPro
-from torch.utils.data import ChainDataset
-from torchvision.transforms import Compose
+from ssr.data.vo_cot import VoCoTDataset
+from torch.utils.data import ConcatDataset
+from ssr.data.vis_cot import VisualCoTDataset
 from ssr.data.llava_cot import LLaVACoTDataset
+from ssr.data.spatial_qa import SpatialQACoTDataset
 from transformers import CLIPProcessor, SiglipVisionModel
 from ssr.models.tokenization_internlm3 import Internlm3Tokenizer
-from ssr.utils.prompt import SSRStage, SSRSpecialToken, repeat_special_tokens, construct_conversation, create_labels
+from ssr.utils.prompt import SSRSpecialToken, repeat_special_tokens, construct_conversation, create_labels
 
 
 def prepare_ssr_dataset(
     cot_data_dirs: List[str]
     , clip_processor: CLIPProcessor
     , siglip_processor: SiglipVisionModel
-) -> ChainDataset:
+) -> ConcatDataset:
     dataset_map = {
         "LLaVA-CoT-100k": LLaVACoTDataset
+        , "SpatialQA": SpatialQACoTDataset
+        , "Visual-CoT": VisualCoTDataset
+        , "VoCoT": VoCoTDataset
     }
     datasets = []
     for cot_data_dir in cot_data_dirs:
@@ -30,25 +32,25 @@ def prepare_ssr_dataset(
                 , siglip_processor=siglip_processor
             )
         )
-    dataset = ChainDataset(datasets)
+    dataset = ConcatDataset(datasets)
     return dataset
 
 
 @dataclass
 class SSRDataCollator(object):
-    stage: SSRStage
+    stage: int
     n_tor: int
     n_image_tokens: int
     n_depth_tokens: int
     tokenizer: Internlm3Tokenizer
-    def __call__(self, instances: list[dict]) -> dict[str, torch.Tensor]:
+    def __call__(self, instances: List[Dict]) -> Dict[str, torch.Tensor]:
         convs = []
         for instance in instances:
             question, rationale, answer = (instance[key] for key in ("question", "rationale", "answer"))
             conv = repeat_special_tokens(
                 input_string=construct_conversation(
                     question=question
-                    , rationale=rationale if self.stage == SSRStage.mamba else ""
+                    , rationale=rationale if self.stage == 1 else ""
                     , answer=answer
                     , stage=self.stage
                     , n_tor=self.n_tor

@@ -3,12 +3,52 @@ import json
 import torch
 import autoroot
 import depth_pro
+import numpy as np
 from PIL import Image
+from typing import Any
 from functools import partial
 from argparse import ArgumentParser
+from torch.utils.data import Dataset
 from torchvision.transforms import Compose
+from ssr.utils.prompt import SSRSpecialToken
 from tqdm.contrib.concurrent import thread_map
-from ssr.utils.misc import convert_depth, get_chunk, change_ext
+from transformers import CLIPProcessor, SiglipVisionModel
+from ssr.utils.misc import convert_depth, get_chunk, change_ext, load_jsonl
+
+
+class VoCoTDataset(Dataset):
+    def __init__(
+        self
+        , data_dir: str
+        , clip_processor: CLIPProcessor
+        , siglip_processor: SiglipVisionModel
+    ) -> None:
+        self.data_dir = data_dir
+        self.clip_processor = clip_processor
+        self.siglip_processor = siglip_processor
+        self.data = load_jsonl(os.path.join(data_dir, "ssr_vocot.jsonl"))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx: int) -> Any:
+        item = self.data[idx]
+        question, rationale, answer, image_path = item["question"], item["rationale"], item["answer"], item["image_path"]
+        question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
+        depth_path = os.sep.join([f"{item['image_path'].split(os.sep)[0]}_d"] + item["image_path"].split(os.sep)[1:])
+        depth_path = change_ext(depth_path, "png")
+        image_path, depth_path = [os.path.join(self.data_dir, "images", key) for key in (image_path, depth_path)]
+        image = Image.open(image_path).convert("RGB")
+        image = (self.clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
+        depth = convert_depth(np.array(Image.open(depth_path)), convert_16bits=True, convert_3channels=True)
+        depth = (self.siglip_processor(images=depth, return_tensors="pt").pixel_values).squeeze(0)
+        return {
+            "question": question
+            , "rationale": rationale
+            , "answer": answer
+            , "image": image
+            , "depth": depth
+        }
 
 
 if __name__ == "__main__":

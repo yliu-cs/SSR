@@ -2,14 +2,54 @@ import os
 import torch
 import autoroot
 import depth_pro
+import numpy as np
 from PIL import Image
+from typing import Any
 from itertools import chain
 from functools import partial
 from argparse import ArgumentParser
+from torch.utils.data import Dataset
 from torchvision.transforms import Compose
+from ssr.utils.prompt import SSRSpecialToken
 from tqdm.contrib.concurrent import thread_map
+from transformers import CLIPProcessor, SiglipVisionModel
 from ssr.utils.misc import convert_depth, get_chunk, change_ext, load_jsonl
 
+
+class VisualCoTDataset(Dataset):
+    def __init__(
+        self
+        , data_dir: str
+        , clip_processor: CLIPProcessor
+        , siglip_processor: SiglipVisionModel
+    ) -> None:
+        self.data_dir = data_dir
+        self.clip_processor = clip_processor
+        self.siglip_processor = siglip_processor
+        self.data = load_jsonl(os.path.join(data_dir, "ssr_viscot.jsonl"))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx: int) -> Any:
+        item = self.data[idx]
+        question, rationale, answer = item["question"], item["rationale"], item["answer"]
+        question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
+        image_path = item["image_path"]
+        depth_path = os.sep.join([f"{item['image_path'].split(os.sep)[0]}_d"] + item["image_path"].split(os.sep)[1:])
+        depth_path = change_ext(depth_path, "png")
+        image_path, depth_path = [os.path.join(self.data_dir, "images", key) for key in (image_path, depth_path)]
+        image = Image.open(image_path).convert("RGB")
+        image = (self.clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
+        depth = convert_depth(np.array(Image.open(depth_path)), convert_16bits=True, convert_3channels=True)
+        depth = (self.siglip_processor(images=depth, return_tensors="pt").pixel_values).squeeze(0)
+        return {
+            "question": question
+            , "rationale": rationale
+            , "answer": answer
+            , "image": image
+            , "depth": depth
+        }
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -22,14 +62,14 @@ if __name__ == "__main__":
 
     def save_image2depth(image_path: str, model: depth_pro.depth_pro.DepthPro, transform: Compose, device: torch.device) -> None:
         depth_path = os.sep.join([f"{image_path.split(os.sep)[0]}_d"] + image_path.split(os.sep)[1:])
-        depth_path = os.path.join(args.data_dir, "cot_image_data", depth_path)
+        depth_path = os.path.join(args.data_dir, "images", depth_path)
         depth_path = change_ext(depth_path, "png")
         if os.path.exists(depth_path):
             return
         depth_dir = os.path.dirname(depth_path)
         if not os.path.exists(depth_dir):
             os.makedirs(depth_dir, exist_ok=True)
-        image = Image.open(os.path.join(args.data_dir, "cot_image_data", image_path)).convert("RGB")
+        image = Image.open(os.path.join(args.data_dir, "images", image_path)).convert("RGB")
         image, _, f_px = depth_pro.load_pil(image)
         image = transform(image)
         image = image.to(device)

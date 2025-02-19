@@ -135,7 +135,10 @@ def load_jsonl(file_path: str) -> List[Any]:
     lst = []
     with open(file_path, "r", encoding="utf-8") as file:
         for line in file:
-            lst.append(json.loads(line.strip()))
+            try:
+                lst.append(json.loads(line.strip()))
+            except Exception as e:
+                continue
     return lst
 
 
