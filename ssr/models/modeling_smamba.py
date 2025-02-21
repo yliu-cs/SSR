@@ -33,23 +33,26 @@ class SSRMambaForCausalLM(MambaForCausalLM):
     def __init__(self, config) -> None:
         super().__init__(config)
 
-    def merge_input_embeds_with_image_depth(
+    def multimodal_embedding(
         self
         , image_embeds: torch.FloatTensor
         , depth_embeds: torch.FloatTensor
-        , inputs_embeds: torch.FloatTensor
         , input_ids: torch.LongTensor
-    ) -> None:
-        # Merge Image Embeds
-        if image_embeds is not None and input_ids.size(1) != 1:
-            for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id == self.image_token_id)
-                inputs_embeds[batch_idx][matching] = image_embeds[batch_idx, ...]
-        # Merge Depth Embeds
-        if depth_embeds is not None and input_ids.shape[1] != 1:
-            for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id == self.depth_token_id)
-                inputs_embeds[batch_idx][matching] = depth_embeds[batch_idx, ...]
+    ) -> torch.FloatTensor:
+        input_embeds = []
+        for batch_idx, input_id in enumerate(input_ids):
+            input_embed, image_cnt, depth_cnt = [], 0, 0
+            for token_id in input_id:
+                if token_id == self.image_token_id:
+                    input_embed.append(image_embeds[batch_idx, image_cnt, :])
+                    image_cnt += 1
+                elif token_id == self.depth_token_id:
+                    input_embed.append(depth_embeds[batch_idx, depth_cnt, :])
+                    depth_cnt += 1
+                else:
+                    input_embed.append(self.get_input_embeddings()(token_id))
+            input_embeds.append(torch.stack(input_embed, dim=0))
+        return torch.stack(input_embeds, dim=0)
     
     def forward(
         self,
@@ -67,8 +70,7 @@ class SSRMambaForCausalLM(MambaForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if inputs_embeds is None:
-            inputs_embeds = self.get_input_embeddings()(input_ids)
-            self.merge_input_embeds_with_image_depth(image_embeds, depth_embeds, inputs_embeds, input_ids)
+            inputs_embeds = self.multimodal_embedding(image_embeds, depth_embeds, input_ids)
 
         mamba_outputs = self.backbone(
             cache_params=cache_params,

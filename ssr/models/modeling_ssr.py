@@ -43,8 +43,8 @@ class SSRConfig(PretrainedConfig):
         , mamba_path: str = ""
         , internlm3_path: str = ""
         , stage1_path: str = ""
-        , bits: int = 4
         , stage: int = 1
+        , bits: int = 4
         , lora_r: int = 64
         , lora_alpha: int = 64
         , lora_dropout: float = 0.1
@@ -54,8 +54,8 @@ class SSRConfig(PretrainedConfig):
         self.mamba_path = mamba_path
         self.internlm3_path = internlm3_path
         self.stage1_path = stage1_path
-        self.bits = bits
         self.stage = stage
+        self.bits = bits
         self.lora_r = lora_r
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
@@ -72,6 +72,7 @@ class SSR(PreTrainedModel):
             self.mamba = load_mamba(self.config.mamba_path)
             self.internlm3, self.tokenizer = load_internlm3(self.config.internlm3_path, bits=self.config.bits, add_special_tokens=True)
             self.mamba.backbone.embeddings = nn.Embedding(num_embeddings=self.internlm3.config.vocab_size, embedding_dim=self.mamba.config.hidden_size)
+            self.mamba.config.vocab_size = self.internlm3.config.vocab_size
             self.mamba_image_proj = Projector(ProjectorConfig(self.image_encoder.config.hidden_size, self.mamba.config.hidden_size))
             self.mamba_depth_proj = Projector(ProjectorConfig(self.depth_encoder.config.hidden_size, self.mamba.config.hidden_size))
             self.tor_proj = Projector(ProjectorConfig(self.mamba.config.hidden_size, self.internlm3.config.hidden_size))
@@ -98,7 +99,6 @@ class SSR(PreTrainedModel):
         if self.config.stage == 1:
             freeze_module(self.internlm3)
         elif self.config.stage == 2:
-            self.internlm3.gradient_checkpointing_enable()
             self.internlm3 = prepare_model_for_kbit_training(self.internlm3)
             lora_config = LoraConfig(
                 r=self.config.lora_r
@@ -121,46 +121,21 @@ class SSR(PreTrainedModel):
         image_embeds = self.image_encoder(image).hidden_states[-2][:, 1:, :]
         depth_embeds = self.depth_encoder(depth).hidden_states[-1][:, :, :]
         # print(f"{input_ids.size()=} {attention_mask.size()=} {labels.size()=} {image_embeds.size()=} {depth_embeds.size()=}")
-        with autocast("cuda", enabled=False):
-            mamba_outputs = self.mamba(
-                input_ids=input_ids
-                , attention_mask=attention_mask
-                , image_embeds=self.mamba_image_proj(image_embeds)
-                , depth_embeds=self.mamba_depth_proj(depth_embeds)
-            )
+        mamba_outputs = self.mamba(
+            input_ids=input_ids.clone()
+            , attention_mask=attention_mask
+            , image_embeds=self.mamba_image_proj(image_embeds.clone())
+            , depth_embeds=self.mamba_depth_proj(depth_embeds.clone())
+        )
         last_hidden_state = mamba_outputs.last_hidden_state
         tor_embeds = self.tor_proj(last_hidden_state[(input_ids == self.tor_token_id), :])
         tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
-        with autocast("cuda", enabled=True, dtype=torch.bfloat16):
-            internlm_outputs = self.internlm3(
-                input_ids=input_ids
-                , image_embeds=self.internlm3_image_proj(image_embeds)
-                , depth_embeds=self.internlm3_depth_proj(depth_embeds)
-                , tor_embeds=tor_embeds
-                , attention_mask=attention_mask
-                , labels=labels
-            )
+        internlm_outputs = self.internlm3(
+            input_ids=input_ids.clone()
+            , image_embeds=self.internlm3_image_proj(image_embeds.clone())
+            , depth_embeds=self.internlm3_depth_proj(depth_embeds.clone())
+            , tor_embeds=tor_embeds
+            , attention_mask=attention_mask
+            , labels=labels
+        )
         return internlm_outputs
-    
-    @classmethod
-    def from_pretrained(
-        cls
-        , pretrained_model_name_or_path: str
-        , *model_args
-        , internlm3_config: Dict = None
-        , mamba_config: Dict = None
-        , **kwargs
-    ) -> "SSR":
-        config = SSRConfig.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, config=config, **kwargs)
-        if internlm3_config:
-            if "torch_dtype" in internlm3_config:
-                model.internlm3.to(internlm3_config["torch_dtype"])
-            if "attn_implementation" in internlm3_config:
-                model.internlm3.config.attn_implementation = internlm3_config["attn_implementation"]
-            if "quantization_config" in internlm3_config:
-                model.internlm3.config.quantization_config = internlm3_config["quantization_config"]
-        if mamba_config:
-            if "torch_dtype" in mamba_config:
-                model.mamba.to(mamba_config["torch_dtype"])
-        return model

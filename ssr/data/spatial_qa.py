@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import random
 import autoroot
 import numpy as np
 from tqdm import tqdm
@@ -31,24 +32,27 @@ class SpatialQACoTDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        item = self.data[idx]
-        question, rationale, answer = item["question"], item["rationale"], item["answer"]
-        question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
-        image_path = os.path.join(self.data_dir, "images", item["image_path"])
-        image = Image.open(image_path).convert("RGB")
-        image = (self.clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
-        depth_path = os.sep.join([f"{item['image_path'].split(os.sep)[0]}_d"] + item['image_path'].split(os.sep)[1:])
-        depth_path = os.path.join(self.data_dir, "images", depth_path)
-        depth_path = change_ext(depth_path, "png")
-        depth = convert_depth(np.array(Image.open(depth_path)), convert_16bits=True, convert_3channels=True)
-        depth = (self.siglip_processor(images=depth, return_tensors="pt").pixel_values).squeeze(0)
-        return {
-            "question": question
-            , "rationale": rationale
-            , "answer": answer
-            , "image": image
-            , "depth": depth
-        }
+        try:
+            item = self.data[idx]
+            question, rationale, answer = item["question"], item["rationale"], item["answer"]
+            question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
+            image_path = os.path.join(self.data_dir, "images", item["image_path"])
+            image = Image.open(image_path).convert("RGB")
+            image = (self.clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
+            depth_path = os.sep.join([f"{item['image_path'].split(os.sep)[0]}_d"] + item['image_path'].split(os.sep)[1:])
+            depth_path = os.path.join(self.data_dir, "images", depth_path)
+            depth_path = change_ext(depth_path, "png")
+            depth = convert_depth(np.array(Image.open(depth_path)), convert_16bits=True, convert_3channels=True)
+            depth = (self.siglip_processor(images=depth, return_tensors="pt").pixel_values).squeeze(0)
+            return {
+                "question": question
+                , "rationale": rationale
+                , "answer": answer
+                , "image": image
+                , "depth": depth
+            }
+        except Exception as e:
+            return random.choice(self)
 
 
 GEN_CoT_PROMPT = lambda question, answer: f"""I have an image and a question that I want you to answer.

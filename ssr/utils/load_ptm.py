@@ -1,7 +1,7 @@
 import os
 import torch
 import depth_pro
-from typing import Tuple, Dict
+from typing import Tuple
 from depth_pro.depth_pro import DepthPro
 from ssr.utils.misc import freeze_module
 from torchvision.transforms import Compose

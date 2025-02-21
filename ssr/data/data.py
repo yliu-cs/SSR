@@ -1,7 +1,7 @@
 import os
 import torch
-from typing import List, Dict
 from dataclasses import dataclass
+from typing import List, Dict, Tuple
 from ssr.data.vo_cot import VoCoTDataset
 from torch.utils.data import ConcatDataset
 from ssr.data.vis_cot import VisualCoTDataset
@@ -42,6 +42,7 @@ class SSRDataCollator(object):
     n_tor: int
     n_image_tokens: int
     n_depth_tokens: int
+    max_length: Tuple[int, int, int]
     tokenizer: Internlm3Tokenizer
     def __call__(self, instances: List[Dict]) -> Dict[str, torch.Tensor]:
         convs = []
@@ -54,6 +55,8 @@ class SSRDataCollator(object):
                     , answer=answer
                     , stage=self.stage
                     , n_tor=self.n_tor
+                    , max_length=self.max_length
+                    , tokenizer=self.tokenizer
                 )
                 , special_tokens=[SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN]
                 , n_repeats=[self.n_image_tokens, self.n_depth_tokens]

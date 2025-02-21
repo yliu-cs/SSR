@@ -1,6 +1,7 @@
 import os
 import re
 import torch
+import random
 import autoroot
 import depth_pro
 import numpy as np
@@ -43,31 +44,34 @@ class LLaVACoTDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx: int) -> Any:
-        item = self.data[idx]
-        image_path = os.path.join(self.data_dir, item["image"])
-        image = Image.open(image_path).convert("RGB")
-        conversations = item["conversations"]
-        question, rationale, answer = None, None, None
-        for conv in conversations:
-            if conv["from"] == "human":
-                question = conv["value"]
-            else:
-                rationale, answer = parse_special_tokens(conv["value"])
-            if question and rationale and answer:
-                break
-        question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
-        image = (self.clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
-        depth_path = os.sep.join([self.data_dir] + [f"{item['image'].split(os.sep)[0]}_d"] + item["image"].split(os.sep)[1:])
-        depth_path = change_ext(depth_path, "png")
-        depth = convert_depth(np.array(Image.open(depth_path)), convert_16bits=True, convert_3channels=True)
-        depth = (self.siglip_processor(images=depth, return_tensors="pt").pixel_values).squeeze(0)
-        return {
-            "question": question
-            , "rationale": rationale
-            , "answer": answer
-            , "image": image
-            , "depth": depth
-        }
+        try:
+            item = self.data[idx]
+            image_path = os.path.join(self.data_dir, item["image"])
+            image = Image.open(image_path).convert("RGB")
+            conversations = item["conversations"]
+            question, rationale, answer = None, None, None
+            for conv in conversations:
+                if conv["from"] == "human":
+                    question = conv["value"]
+                else:
+                    rationale, answer = parse_special_tokens(conv["value"])
+                if question and rationale and answer:
+                    break
+            question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
+            image = (self.clip_processor(images=image, return_tensors="pt").pixel_values).squeeze(0)
+            depth_path = os.sep.join([self.data_dir] + [f"{item['image'].split(os.sep)[0]}_d"] + item["image"].split(os.sep)[1:])
+            depth_path = change_ext(depth_path, "png")
+            depth = convert_depth(np.array(Image.open(depth_path)), convert_16bits=True, convert_3channels=True)
+            depth = (self.siglip_processor(images=depth, return_tensors="pt").pixel_values).squeeze(0)
+            return {
+                "question": question
+                , "rationale": rationale
+                , "answer": answer
+                , "image": image
+                , "depth": depth
+            }
+        except Exception as e:
+            return random.choice(self)
 
 
 if __name__ == "__main__":

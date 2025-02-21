@@ -1,7 +1,7 @@
 import re
 import torch
-from typing import List
 from enum import StrEnum
+from typing import List, Tuple
 from ssr.models.tokenization_internlm3 import Internlm3Tokenizer
 
 
@@ -15,11 +15,7 @@ class SSRSpecialToken(StrEnum):
     DEPTH_TOKEN = "<depth>"
 
 IGNORE_TOKEN_ID = -100
-SYSTEM_PROMPT = "\n".join([
-    "You are an AI assistant whose name is InternLM."
-    , "- InternLM is a conversational language model that is designed to be helpful, honest, and harmless."
-    , "- InternLM can understand and communicate fluently."
-])
+SYSTEM_PROMPT = "You are an AI assistant whose name is InternLM. InternLM is a conversational language model that is designed to be helpful, honest, and harmless, which can understand and communicate fluently."
 
 
 def find_special_token_indices(main_string: str, special_token: str) -> List[int]:
@@ -82,13 +78,33 @@ def repeat_special_tokens(input_string: str, special_tokens: List[str], n_repeat
     return result
 
 
+def string_truncation(
+    text: str
+    , tokenizer: Internlm3Tokenizer
+    , max_length: int
+) -> str:
+    return tokenizer.decode(
+        tokenizer.encode(
+            text
+            , max_length=max_length
+            , truncation=True
+            # , padding="max_length"
+            , return_tensors="pt"
+        )[0]
+        , skip_special_tokens=True
+    )
+
+
 def construct_conversation(
     question: str
     , rationale: str = ""
     , answer: str = ""
     , stage: int = 1
     , n_tor: int = 10
+    , max_length: Tuple[int, int, int] = (256, 1024, 256)
+    , tokenizer: Internlm3Tokenizer = None
 ) -> str:
+    question, rationale, answer = (string_truncation(text, tokenizer, max_len) for text, max_len in zip((question, rationale, answer), max_length))
     messages = []
     if stage != 1:
         messages.append({"role": "system", "content": "\n".join([SYSTEM_PROMPT, "You should give helpful answer to user based on the rationale."])})

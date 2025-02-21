@@ -1,12 +1,10 @@
 import torch
-from torch import nn
 from einops import rearrange
-import torch.nn.functional as F
 from dataclasses import dataclass
 from transformers.cache_utils import Cache
 from typing import List, Tuple, Optional, Union
 from transformers.modeling_outputs import ModelOutput
-from .modeling_internlm3 import Cache, Unpack, KwargsForCausalLM, InternLM3PreTrainedModel, InternLM3Model
+from .modeling_internlm3 import Cache, Unpack, KwargsForCausalLM, InternLM3ForCausalLM
 
 
 @dataclass
@@ -17,44 +15,36 @@ class SSRCausalLMOutputWithPast(ModelOutput):
     tor_embeds: Optional[List[torch.FloatTensor]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
-    image_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
 
 
-class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
-    _auto_class = "AutoModelForCausalLM"
-    _tied_weights_keys = ["output.weight"]
-
+class SSRInternlm3ForCausalLM(InternLM3ForCausalLM):
     def __init__(self, config) -> None:
         super().__init__(config)
-        self.model = InternLM3Model(config)
-        self.vocab_size = config.vocab_size
-        self.output = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self.max_length = config.max_length
-        self.post_init()
     
-    def merge_input_embeds_with_image_depth(
+    def multimodal_embedding(
         self
         , image_embeds: torch.FloatTensor
         , depth_embeds: torch.FloatTensor
         , tor_embeds: torch.FloatTensor
-        , inputs_embeds: torch.FloatTensor
         , input_ids: torch.LongTensor
-    ) -> None:
-        # Merge Image Embeds
-        if image_embeds is not None and input_ids.size(1) != 1:
-            for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id == self.image_token_id)
-                inputs_embeds[batch_idx][matching] = image_embeds[batch_idx, ...]
-        # Merge Depth Embeds
-        if depth_embeds is not None and input_ids.shape[1] != 1:
-            for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id == self.depth_token_id)
-                inputs_embeds[batch_idx][matching] = depth_embeds[batch_idx, ...]
-        # Merge Tor Embeds
-        if tor_embeds is not None and input_ids.size(1) != 1:
-            for batch_idx, input_id in enumerate(input_ids):
-                matching = torch.where(input_id  == self.tor_token_id)
-                inputs_embeds[batch_idx][matching] = tor_embeds[batch_idx].to(inputs_embeds.dtype)
+    ) -> torch.FloatTensor:
+        input_embeds = []
+        for batch_idx, input_id in enumerate(input_ids):
+            input_embed, image_cnt, depth_cnt, tor_cnt = [], 0, 0, 0
+            for token_id in input_id:
+                if token_id == self.image_token_id:
+                    input_embed.append(image_embeds[batch_idx, image_cnt, :])
+                    image_cnt += 1
+                elif token_id == self.depth_token_id:
+                    input_embed.append(depth_embeds[batch_idx, depth_cnt, :])
+                    depth_cnt += 1
+                elif token_id == self.tor_token_id:
+                    input_embed.append(tor_embeds[batch_idx, tor_cnt, :])
+                    tor_cnt += 1
+                else:
+                    input_embed.append(self.get_input_embeddings()(token_id))
+            input_embeds.append(torch.stack(input_embed, dim=0))
+        return torch.stack(input_embeds, dim=0)
     
     def forward(
         self,
@@ -71,17 +61,17 @@ class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        num_logits_to_keep: int = 0,
         **kwargs: Unpack[KwargsForCausalLM],
     ) -> Union[Tuple, SSRCausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         if inputs_embeds is None:
-            inputs_embeds = self.get_input_embeddings()(input_ids)
-            self.merge_input_embeds_with_image_depth(image_embeds, depth_embeds, tor_embeds, inputs_embeds, input_ids)
+            inputs_embeds = self.multimodal_embedding(image_embeds, depth_embeds, tor_embeds, input_ids)
         outputs = self.model(
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -91,24 +81,19 @@ class SSRInternlm3ForCausalLM(InternLM3PreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
+            **kwargs,
         )
-        last_hidden_state = outputs.last_hidden_state
-        logits = self.output(last_hidden_state)
+        hidden_states = outputs[0]
+        logits = self.lm_head(hidden_states[:, -num_logits_to_keep:, :])
         loss = None
         if labels is not None:
-            if attention_mask is not None:
-                shift_attention_mask = attention_mask[..., 1:]
-                shift_logits = logits[..., :-1, :][shift_attention_mask.to(logits.device) != 0].contiguous()
-                shift_labels = labels[..., 1:][shift_attention_mask.to(labels.device) != 0].contiguous()
-            else:
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
-            loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1).to(shift_logits.device))
+            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
         if not return_dict:
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
-        tor_embeds = last_hidden_state[(input_ids == self.tor_token_id), :]
-        tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
+        tor_embeds = hidden_states[:, -num_logits_to_keep:, :][(input_ids == self.tor_token_id), :]
+        tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=hidden_states[:, -num_logits_to_keep:, :].size(0))
         return SSRCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
