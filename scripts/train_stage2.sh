@@ -23,7 +23,6 @@ torchrun \
     --stage1_path /ssdwork/liuyang/Checkpoint/SSR/stage1 \
     --per_device_train_batch_size 8 \
     --remove_unused_columns False \
-    --ddp_find_unused_parameters True \
     --stage 2 \
     --bf16 True \
     --eval_strategy no \

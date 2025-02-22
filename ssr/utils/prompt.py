@@ -101,10 +101,7 @@ def construct_conversation(
     , answer: str = ""
     , stage: int = 1
     , n_tor: int = 10
-    , max_length: Tuple[int, int, int] = (256, 1024, 256)
-    , tokenizer: Internlm3Tokenizer = None
 ) -> str:
-    question, rationale, answer = (string_truncation(text, tokenizer, max_len) for text, max_len in zip((question, rationale, answer), max_length))
     messages = []
     if stage != 1:
         messages.append({"role": "system", "content": "\n".join([SYSTEM_PROMPT, "You should give helpful answer to user based on the rationale."])})

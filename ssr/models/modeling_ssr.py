@@ -122,18 +122,18 @@ class SSR(PreTrainedModel):
         depth_embeds = self.depth_encoder(depth).hidden_states[-1][:, :, :]
         # print(f"{input_ids.size()=} {attention_mask.size()=} {labels.size()=} {image_embeds.size()=} {depth_embeds.size()=}")
         mamba_outputs = self.mamba(
-            input_ids=input_ids.clone()
+            input_ids=input_ids
             , attention_mask=attention_mask
-            , image_embeds=self.mamba_image_proj(image_embeds.clone())
-            , depth_embeds=self.mamba_depth_proj(depth_embeds.clone())
+            , image_embeds=self.mamba_image_proj(image_embeds)
+            , depth_embeds=self.mamba_depth_proj(depth_embeds)
         )
         last_hidden_state = mamba_outputs.last_hidden_state
         tor_embeds = self.tor_proj(last_hidden_state[(input_ids == self.tor_token_id), :])
         tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
         internlm_outputs = self.internlm3(
-            input_ids=input_ids.clone()
-            , image_embeds=self.internlm3_image_proj(image_embeds.clone())
-            , depth_embeds=self.internlm3_depth_proj(depth_embeds.clone())
+            input_ids=input_ids
+            , image_embeds=self.internlm3_image_proj(image_embeds)
+            , depth_embeds=self.internlm3_depth_proj(depth_embeds)
             , tor_embeds=tor_embeds
             , attention_mask=attention_mask
             , labels=labels

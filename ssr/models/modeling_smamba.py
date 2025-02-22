@@ -1,32 +1,8 @@
 import torch
-from dataclasses import dataclass
 from typing import Tuple, Optional, Union
 from transformers import MambaForCausalLM
-from transformers.modeling_outputs import ModelOutput
-
-
-class MambaCache:
-    def __init__(self, config, batch_size, dtype=torch.float16, device=None) -> None:
-        self.seqlen_offset = 0
-        self.dtype = dtype
-        intermediate_size = config.intermediate_size
-        ssm_state_size = config.state_size
-        conv_kernel_size = config.conv_kernel
-        self.conv_states = {
-            i: torch.zeros(batch_size, intermediate_size, conv_kernel_size, device=device, dtype=dtype)
-            for i in range(config.num_hidden_layers)
-        }
-        self.ssm_states = {
-            i: torch.zeros(batch_size, intermediate_size, ssm_state_size, device=device, dtype=dtype)
-            for i in range(config.num_hidden_layers)
-        }
-
-
-@dataclass
-class MambaCausalLMOutput(ModelOutput):
-    loss: Optional[torch.FloatTensor] = None
-    cache_params: Optional[MambaCache] = None
-    last_hidden_state: Optional[Tuple[torch.FloatTensor]] = None
+from transformers.cache_utils import MambaCache
+from transformers.models.mamba.modeling_mamba import MambaCausalLMOutput
 
 
 class SSRMambaForCausalLM(MambaForCausalLM):
@@ -68,10 +44,8 @@ class SSRMambaForCausalLM(MambaForCausalLM):
         **kwargs,
     ) -> Union[Tuple, MambaCausalLMOutput]:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
         if inputs_embeds is None:
             inputs_embeds = self.multimodal_embedding(image_embeds, depth_embeds, input_ids)
-
         mamba_outputs = self.backbone(
             cache_params=cache_params,
             inputs_embeds=inputs_embeds,
@@ -80,10 +54,4 @@ class SSRMambaForCausalLM(MambaForCausalLM):
             use_cache=use_cache,
             attention_mask=attention_mask,
         )
-        last_hidden_state = mamba_outputs.last_hidden_state
-
-        return MambaCausalLMOutput(
-            loss=None,
-            cache_params=mamba_outputs.cache_params,
-            last_hidden_state=last_hidden_state,
-        )
+        return mamba_outputs

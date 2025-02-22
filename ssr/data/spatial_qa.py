@@ -7,23 +7,28 @@ import numpy as np
 from tqdm import tqdm
 from PIL import Image
 from openai import OpenAI
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from argparse import ArgumentParser
 from torch.utils.data import Dataset
-from ssr.utils.prompt import SSRSpecialToken
 from tqdm.contrib.concurrent import thread_map
 from transformers import CLIPProcessor, SiglipVisionModel
+from ssr.utils.prompt import SSRSpecialToken, string_truncation
 from ssr.utils.misc import get_chunk, change_ext, convert_depth
+from ssr.models.tokenization_internlm3 import Internlm3Tokenizer
 
 
 class SpatialQACoTDataset(Dataset):
     def __init__(
         self
         , data_dir: str
+        , tokenizer: Internlm3Tokenizer
+        , max_length: Tuple[int, int, int]
         , clip_processor: CLIPProcessor
         , siglip_processor: SiglipVisionModel
     ) -> None:
         self.data_dir = data_dir
+        self.tokenizer = tokenizer
+        self.max_length = max_length
         self.clip_processor = clip_processor
         self.siglip_processor = siglip_processor
         self.data = json.load(open(os.path.join(data_dir, "ssr_spatialqa.json"), "r"))
@@ -35,6 +40,7 @@ class SpatialQACoTDataset(Dataset):
         try:
             item = self.data[idx]
             question, rationale, answer = item["question"], item["rationale"], item["answer"]
+            question, rationale, answer = (string_truncation(text, self.tokenizer, max_len) for text, max_len in zip((question, rationale, answer), self.max_length))
             question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
             image_path = os.path.join(self.data_dir, "images", item["image_path"])
             image = Image.open(image_path).convert("RGB")

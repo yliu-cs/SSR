@@ -14,6 +14,8 @@ from ssr.utils.prompt import SSRSpecialToken, repeat_special_tokens, construct_c
 
 def prepare_ssr_dataset(
     cot_data_dirs: List[str]
+    , tokenizer: Internlm3Tokenizer
+    , max_length: Tuple[int, int, int]
     , clip_processor: CLIPProcessor
     , siglip_processor: SiglipVisionModel
 ) -> ConcatDataset:
@@ -28,6 +30,8 @@ def prepare_ssr_dataset(
         datasets.append(
             dataset_map[os.path.basename(cot_data_dir)](
                 data_dir=cot_data_dir
+                , tokenizer=tokenizer
+                , max_length=max_length
                 , clip_processor=clip_processor
                 , siglip_processor=siglip_processor
             )
@@ -42,7 +46,6 @@ class SSRDataCollator(object):
     n_tor: int
     n_image_tokens: int
     n_depth_tokens: int
-    max_length: Tuple[int, int, int]
     tokenizer: Internlm3Tokenizer
     def __call__(self, instances: List[Dict]) -> Dict[str, torch.Tensor]:
         convs = []
@@ -55,8 +58,6 @@ class SSRDataCollator(object):
                     , answer=answer
                     , stage=self.stage
                     , n_tor=self.n_tor
-                    , max_length=self.max_length
-                    , tokenizer=self.tokenizer
                 )
                 , special_tokens=[SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN]
                 , n_repeats=[self.n_image_tokens, self.n_depth_tokens]

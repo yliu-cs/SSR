@@ -5,15 +5,16 @@ import autoroot
 import depth_pro
 import numpy as np
 from PIL import Image
-from typing import Any
+from typing import Any, Tuple
 from itertools import chain
 from functools import partial
 from argparse import ArgumentParser
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
-from ssr.utils.prompt import SSRSpecialToken
 from tqdm.contrib.concurrent import thread_map
 from transformers import CLIPProcessor, SiglipVisionModel
+from ssr.utils.prompt import SSRSpecialToken, string_truncation
+from ssr.models.tokenization_internlm3 import Internlm3Tokenizer
 from ssr.utils.misc import convert_depth, get_chunk, change_ext, load_jsonl
 
 
@@ -21,10 +22,14 @@ class VisualCoTDataset(Dataset):
     def __init__(
         self
         , data_dir: str
+        , tokenizer: Internlm3Tokenizer
+        , max_length: Tuple[int, int, int]
         , clip_processor: CLIPProcessor
         , siglip_processor: SiglipVisionModel
     ) -> None:
         self.data_dir = data_dir
+        self.tokenizer = tokenizer
+        self.max_length = max_length
         self.clip_processor = clip_processor
         self.siglip_processor = siglip_processor
         self.data = load_jsonl(os.path.join(data_dir, "ssr_viscot.jsonl"))
@@ -36,6 +41,7 @@ class VisualCoTDataset(Dataset):
         try:
             item = self.data[idx]
             question, rationale, answer = item["question"], item["rationale"], item["answer"]
+            question, rationale, answer = (string_truncation(text, self.tokenizer, max_len) for text, max_len in zip((question, rationale, answer), self.max_length))
             question = "\n".join([SSRSpecialToken.IMAGE_TOKEN, SSRSpecialToken.DEPTH_TOKEN, question])
             image_path = item["image_path"]
             depth_path = os.sep.join([f"{item['image_path'].split(os.sep)[0]}_d"] + item["image_path"].split(os.sep)[1:])

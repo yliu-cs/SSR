@@ -92,6 +92,8 @@ def train() -> None:
 
     dataset = prepare_ssr_dataset(
         data_args.cot_data_dirs
+        , tokenizer=ssr.tokenizer
+        , max_length=data_args.max_length
         , clip_processor=clip_processor
         , siglip_processor=siglip_processor
     )
@@ -105,7 +107,6 @@ def train() -> None:
             , n_tor=data_args.n_tor
             , n_image_tokens=data_args.n_image_tokens
             , n_depth_tokens=data_args.n_depth_tokens
-            , max_length=data_args.max_length
             , tokenizer=ssr.tokenizer
         )
     )
