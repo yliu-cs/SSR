@@ -28,7 +28,6 @@ torchrun \
     --save_strategy epoch \
     --save_only_model True \
     --save_total_limit 1 \
-    --save_steps 0.2 \
     --num_train_epochs 1 \
     --learning_rate 1e-5 \
     --lr_scheduler_type cosine \

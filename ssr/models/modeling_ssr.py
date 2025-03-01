@@ -3,13 +3,13 @@ import torch
 from torch import nn
 from einops import rearrange
 from torch.amp import autocast
-from typing import Union, Tuple, Dict
 from ssr.utils.misc import freeze_module
 from ssr.utils.misc import build_projector
 from ssr.utils.prompt import SSRSpecialToken
+from typing import Union, Tuple, Optional, Dict, Any
 from ssr.utils.load_ptm import load_mamba, load_internlm3
 from .modeling_sinternlm3 import SSRCausalLMOutputWithPast
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
 from transformers import PretrainedConfig, PreTrainedModel, CLIPVisionModel, SiglipVisionModel
 
 
@@ -43,6 +43,7 @@ class SSRConfig(PretrainedConfig):
         , mamba_path: str = ""
         , internlm3_path: str = ""
         , stage1_path: str = ""
+        , stage2_path: str = ""
         , stage: int = 1
         , bits: int = 4
         , lora_r: int = 64
@@ -54,6 +55,7 @@ class SSRConfig(PretrainedConfig):
         self.mamba_path = mamba_path
         self.internlm3_path = internlm3_path
         self.stage1_path = stage1_path
+        self.stage2_path = stage2_path
         self.stage = stage
         self.bits = bits
         self.lora_r = lora_r
@@ -81,7 +83,7 @@ class SSR(PreTrainedModel):
         else:
             pretrained_path = os.path.join(getattr(self.config, f"stage{self.config.stage - 1}_path"))
             self.mamba = load_mamba(os.path.join(pretrained_path, "mamba"))
-            self.internlm3, self.tokenizer = load_internlm3(os.path.join(pretrained_path, "internlm3"), bits=self.config.bits, add_special_tokens=False)
+            self.internlm3, self.tokenizer = load_internlm3(self.config.internlm3_path, bits=self.config.bits, add_special_tokens=True)
             self.mamba_image_proj = Projector.from_pretrained(os.path.join(pretrained_path, "mamba_image_proj"))
             self.mamba_depth_proj = Projector.from_pretrained(os.path.join(pretrained_path, "mamba_depth_proj"))
             self.tor_proj = Projector.from_pretrained(os.path.join(pretrained_path, "tor_proj"))
@@ -92,6 +94,10 @@ class SSR(PreTrainedModel):
         )
         self.mamba.image_token_id, self.mamba.depth_token_id = self.image_token_id, self.depth_token_id
         self.internlm3.image_token_id, self.internlm3.depth_token_id, self.internlm3.tor_token_id = self.image_token_id, self.depth_token_id, self.tor_token_id
+        if self.config.stage > 2:
+            pretrained_path = os.path.join(getattr(self.config, f"stage{self.config.stage - 1}_path"))
+            self.internlm3 = PeftModel.from_pretrained(self.internlm3, os.path.join(pretrained_path, "internlm3"))
+            self.internlm3.merge_and_unload()
 
     def prepare_modules(self) -> None:
         freeze_module(self.image_encoder)
@@ -109,6 +115,14 @@ class SSR(PreTrainedModel):
                 , task_type="CAUSAL_LM"
             )
             self.internlm3 = get_peft_model(self.internlm3, lora_config)
+        else:
+            freeze_module(self.mamba_image_proj)
+            freeze_module(self.mamba_depth_proj)
+            freeze_module(self.mamba)
+            freeze_module(self.tor_proj)
+            freeze_module(self.internlm3_image_proj)
+            freeze_module(self.internlm3_depth_proj)
+            freeze_module(self.internlm3)
     
     def forward(
         self
@@ -139,3 +153,30 @@ class SSR(PreTrainedModel):
             , labels=labels
         )
         return internlm_outputs
+    
+    def generate(
+        self
+        , input_ids: torch.LongTensor
+        , attention_mask: torch.Tensor
+        , image: torch.Tensor
+        , depth: torch.Tensor
+        , **kwargs
+    ) -> Dict[str, Any]:
+        image_embeds = self.image_encoder(image).hidden_states[-2][:, 1:, :]
+        depth_embeds = self.depth_encoder(depth).hidden_states[-1][:, :, :]
+        mamba_outputs = self.mamba(
+            input_ids=input_ids
+            , attention_mask=attention_mask
+            , image_embeds=self.mamba_image_proj(image_embeds)
+            , depth_embeds=self.mamba_depth_proj(depth_embeds)
+        )
+        last_hidden_state = mamba_outputs.last_hidden_state
+        tor_embeds = self.tor_proj(last_hidden_state[(input_ids == self.tor_token_id), :])
+        tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
+        return self.internlm3.generate(
+            input_ids=input_ids
+            , image_embeds=self.internlm3_image_proj(image_embeds).to(torch.bfloat16)
+            , depth_embeds=self.internlm3_depth_proj(depth_embeds).to(torch.bfloat16)
+            , tor_embeds=tor_embeds.to(torch.bfloat16)
+            , **kwargs
+        )

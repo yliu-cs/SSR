@@ -16,6 +16,11 @@ from numerize.numerize import numerize
 
 
 def init() -> None:
+    try:
+        import shutup
+        shutup.please()
+    except Exception:
+        pass
     warnings.filterwarnings(action="ignore")
     transformers.logging.set_verbosity_error()
 

@@ -84,16 +84,16 @@ class SSRInternlm3ForCausalLM(InternLM3ForCausalLM):
             cache_position=cache_position,
             **kwargs,
         )
-        hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states[:, -num_logits_to_keep:, :])
+        last_hidden_state = outputs.last_hidden_state
+        logits = self.lm_head(last_hidden_state)
         loss = None
         if labels is not None:
             loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
         if not return_dict:
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
-        tor_embeds = hidden_states[:, -num_logits_to_keep:, :][(input_ids == self.tor_token_id), :]
-        tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=hidden_states[:, -num_logits_to_keep:, :].size(0))
+        tor_embeds = last_hidden_state[(input_ids == self.tor_token_id), :]
+        tor_embeds = rearrange(tor_embeds, f"(b l) d -> b l d", b=last_hidden_state.size(0))
         return SSRCausalLMOutputWithPast(
             loss=loss,
             logits=logits,

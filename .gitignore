@@ -7,3 +7,7 @@ train_tiny.sh
 *flag.txt
 *h800*
 *H800*
+wandb
+eval.py
+result
+*.log

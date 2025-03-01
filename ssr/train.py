@@ -119,6 +119,8 @@ def train() -> None:
         unwrapped_model.config.save_pretrained(training_args.output_dir)
         unwrapped_model.tokenizer.save_pretrained(os.path.join(training_args.output_dir, "internlm3"))
         for module_name in ["mamba", "internlm3", "mamba_image_proj", "mamba_depth_proj", "tor_proj", "internlm3_image_proj", "internlm3_depth_proj"]:
+            if module_name == "internlm3" and training_args.stage == 1:
+                continue
             module = getattr(unwrapped_model, module_name)
             module_path = os.path.join(training_args.output_dir, module_name)
             module.save_pretrained(
