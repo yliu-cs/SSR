@@ -1,0 +1,1 @@
+accelerate launch --config_file "scripts/fsdp.yaml"  ssr/train/train_reasoning.py

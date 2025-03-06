@@ -21,12 +21,10 @@ def get_args() -> Namespace:
         , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "VoCoT")
         , os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "SpatialQA")
     ])
-    parser.add_argument("--save_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "SSR-CoT"))
+    parser.add_argument("--save_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "ssr-cot.jsonl"))
     parser.add_argument("--clip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "clip-vit-large-patch14-336"))
     parser.add_argument("--siglip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "siglip-so400m-patch14-384"))
     parser.add_argument("--max_workers", type=int, default=50)
-    parser.add_argument("--num_chunks", type=int, default=4)
-    parser.add_argument("--chunk_idx", type=int, default=0)
     return parser.parse_args()
 
 
@@ -53,199 +51,133 @@ def extract_question_rationale_answer(conversations: List[Dict[str, Any]]) -> Tu
     return question, rationale, answer
 
 
-def get_visual_embeds(
-    raw_image: np.ndarray
-    , raw_depth: np.ndarray
-    , clip_processor: CLIPProcessor
-    , clip_model: CLIPVisionModel
-    , siglip_processor: SiglipProcessor
-    , siglip_model: SiglipVisionModel
-) -> Tuple[np.ndarray, np.ndarray]:
-    with torch.no_grad():
-        image_embeds = (clip_model(**(clip_processor(images=raw_image, return_tensors="pt").to("cuda"))).last_hidden_state).squeeze(0).detach().cpu().numpy()
-        depth_embeds = (siglip_model(**(siglip_processor(images=raw_depth, return_tensors="pt").to("cuda"))).last_hidden_state).squeeze(0).detach().cpu().numpy()
-    return image_embeds, depth_embeds
+def del_path_prefix(path: str) -> str:
+    return os.sep.join(path.split(os.sep)[4:])
 
 
 def preprocess_llava_cot_100k(
     item: Dict[str, Any]
     , data_dir: str
-    , save_dir: str
-    , clip_processor: CLIPProcessor
-    , clip_model: CLIPVisionModel
-    , siglip_processor: SiglipProcessor
-    , siglip_model: SiglipVisionModel
 ) -> None:
+    data = None
     try:
         question, rationale, answer = extract_question_rationale_answer(item["conversations"])
         image_path = os.path.join(data_dir, item["image"])
-        raw_image = np.array(Image.open(image_path).convert("RGB"))
         depth_path = change_ext(os.sep.join([data_dir] + [f"{item['image'].split(os.sep)[0]}_d"] + item["image"].split(os.sep)[1:]), "png")
         raw_depth = colorize_depth(depth_path)
-        image_embeds, depth_embeds = get_visual_embeds(raw_image, raw_depth, clip_processor, clip_model, siglip_processor, siglip_model)
         data = {
             "question": question
             , "rationale": rationale
             , "answer": answer
-            , "image_path": image_path
-            , "image_embeds": image_embeds
-            , "depth_path": depth_path
-            , "depth_embeds": depth_embeds
+            , "image_path": del_path_prefix(image_path)
+            , "depth_path": del_path_prefix(depth_path)
         }
-        np.save(os.path.join(save_dir, f"{hash_str(data_dir + question + rationale + answer)}.npy"), data)
     except:
         pass
+    return data
 
 
 def preprocess_viscot(
     item: Dict[str, Any]
     , data_dir: str
-    , save_dir: str
-    , clip_processor: CLIPProcessor
-    , clip_model: CLIPVisionModel
-    , siglip_processor: SiglipProcessor
-    , siglip_model: SiglipVisionModel
 ) -> None:
+    data = None
     try:
         question, rationale, answer = item["question"], item["rationale"], item["answer"]
         image_path = os.path.join(data_dir, "images", item["image_path"])
-        raw_image = np.array(Image.open(image_path).convert("RGB"))
         depth_path = change_ext(os.sep.join([data_dir, "images"] + [f"{item['image_path'].split(os.sep)[0]}_d"] + item["image_path"].split(os.sep)[1:]), "png")
         raw_depth = colorize_depth(depth_path)
-        image_embeds, depth_embeds = get_visual_embeds(raw_image, raw_depth, clip_processor, clip_model, siglip_processor, siglip_model)
         data = {
             "question": question
             , "rationale": rationale
             , "answer": answer
-            , "image_path": image_path
-            , "image_embeds": image_embeds
-            , "depth_path": depth_path
-            , "depth_embeds": depth_embeds
+            , "image_path": del_path_prefix(image_path)
+            , "depth_path": del_path_prefix(depth_path)
         }
-        np.save(os.path.join(save_dir, f"{hash_str(data_dir + question + rationale + answer)}.npy"), data)
     except:
         pass
+    return data
 
 
 def preprocess_vocot(
     item: Dict[str, Any]
     , data_dir: str
-    , save_dir: str
-    , clip_processor: CLIPProcessor
-    , clip_model: CLIPVisionModel
-    , siglip_processor: SiglipProcessor
-    , siglip_model: SiglipVisionModel
 ) -> None:
+    data = None
     try:
         question, rationale, answer = item["question"], item["rationale"], item["answer"]
         image_path = os.path.join(data_dir, "images", item["image_path"])
-        raw_image = np.array(Image.open(image_path).convert("RGB"))
         depth_path = change_ext(os.sep.join([data_dir, "images"] + [f"{item['image_path'].split(os.sep)[0]}_d"] + item["image_path"].split(os.sep)[1:]), "png")
         raw_depth = colorize_depth(depth_path)
-        image_embeds, depth_embeds = get_visual_embeds(raw_image, raw_depth, clip_processor, clip_model, siglip_processor, siglip_model)
         data = {
             "question": question
             , "rationale": rationale
             , "answer": answer
-            , "image_path": image_path
-            , "image_embeds": image_embeds
-            , "depth_path": depth_path
-            , "depth_embeds": depth_embeds
+            , "image_path": del_path_prefix(image_path)
+            , "depth_path": del_path_prefix(depth_path)
         }
-        np.save(os.path.join(save_dir, f"{hash_str(data_dir + question + rationale + answer)}.npy"), data)
     except:
         pass
-
+    return data
 
 def preprocess_spatialqa(
     item: Dict[str, Any]
     , data_dir: str
-    , save_dir: str
-    , clip_processor: CLIPProcessor
-    , clip_model: CLIPVisionModel
-    , siglip_processor: SiglipProcessor
-    , siglip_model: SiglipVisionModel
 ) -> None:
+    data = None
     try:
         question, rationale, answer = item["question"], item["rationale"], item["answer"]
         image_path = os.path.join(data_dir, "images", item["image_path"])
-        raw_image = np.array(Image.open(image_path).convert("RGB"))
         depth_path = change_ext(os.sep.join([data_dir, "images"] + [f"{item['image_path'].split(os.sep)[0]}_d"] + item["image_path"].split(os.sep)[1:]), "png")
         raw_depth = colorize_depth(depth_path)
-        image_embeds, depth_embeds = get_visual_embeds(raw_image, raw_depth, clip_processor, clip_model, siglip_processor, siglip_model)
         data = {
             "question": question
             , "rationale": rationale
             , "answer": answer
-            , "image_path": image_path
-            , "image_embeds": image_embeds
-            , "depth_path": depth_path
-            , "depth_embeds": depth_embeds
+            , "image_path": del_path_prefix(image_path)
+            , "depth_path": del_path_prefix(depth_path)
         }
-        np.save(os.path.join(save_dir, f"{hash_str(data_dir + question + rationale + answer)}.npy"), data)
     except:
         pass
+    return data
 
 
 def preprocess_data(
     data_dir: str
-    , save_dir: str
-    , clip_processor: CLIPProcessor
-    , clip_model: CLIPVisionModel
-    , siglip_processor: SiglipProcessor
-    , siglip_model: SiglipVisionModel
-    , num_chunks: int
-    , chunk_idx: int
     , max_workers: int
 ) -> None:
     dataset, func = None, None
     if "LLaVA-CoT-100k" in data_dir:
-        dataset = get_chunk(load_jsonl(os.path.join(data_dir, "train.jsonl")), n=num_chunks, k=chunk_idx)
+        dataset = load_jsonl(os.path.join(data_dir, "train.jsonl"))
         func = preprocess_llava_cot_100k
     elif "Visual-CoT" in data_dir:
-        dataset = get_chunk(load_jsonl(os.path.join(data_dir, "ssr_viscot.jsonl")), n=num_chunks, k=chunk_idx)
+        dataset = load_jsonl(os.path.join(data_dir, "ssr_viscot.jsonl"))
         func = preprocess_viscot
     elif "VoCoT" in data_dir:
-        dataset = get_chunk(load_jsonl(os.path.join(data_dir, "ssr_vocot.jsonl")), n=num_chunks, k=chunk_idx)
+        dataset = load_jsonl(os.path.join(data_dir, "ssr_vocot.jsonl"))
         func = preprocess_vocot
     elif "SpatialQA" in data_dir:
-        dataset = get_chunk(json.load(open((os.path.join(data_dir, "ssr_spatialqa.json")), "r")), n=num_chunks, k=chunk_idx)
+        dataset = json.load(open((os.path.join(data_dir, "ssr_spatialqa.json")), "r"))
         func = preprocess_spatialqa
     if dataset and func:
-        thread_map(
-            partial(
-                func
-                , data_dir=data_dir
-                , save_dir=save_dir
-                , clip_processor=clip_processor
-                , clip_model=clip_model
-                , siglip_processor=siglip_processor
-                , siglip_model=siglip_model
-            )
+        data = thread_map(
+            partial(func, data_dir=data_dir)
             , dataset
-            , desc=f"[{chunk_idx}/{num_chunks}] Processing {os.path.basename(data_dir)}"
+            , desc=f"Processing {os.path.basename(data_dir)}"
             , max_workers=max_workers
         )
+        return data
     else:
         raise ValueError(f"No dataset ({dataset}) or function ({func}) to process {data_dir}")
 
 
 def main(args: Namespace) -> None:
-    os.makedirs(args.save_dir, exist_ok=True)
-    clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), CLIPVisionModel.from_pretrained(args.clip_path).to("cuda")
-    siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), SiglipVisionModel.from_pretrained(args.siglip_path).to("cuda")
+    data = []
     for data_dir in args.data_dirs:
-        preprocess_data(
-            data_dir
-            , args.save_dir
-            , clip_processor
-            , clip_model
-            , siglip_processor
-            , siglip_model
-            , args.num_chunks
-            , args.chunk_idx
-            , args.max_workers
-        )
+        data += list(filter(lambda x: x is not None, preprocess_data(data_dir, args.max_workers)))
+    with open(args.save_path, "w", encoding="utf-8") as file:
+        for item in data:
+            file.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

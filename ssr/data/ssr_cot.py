@@ -3,11 +3,26 @@ import torch
 import autoroot
 import numpy as np
 from torch import nn
+from PIL import Image
 from typing import Tuple
-from random import choice
 from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizer
+from ssr.utils.misc import load_jsonl, colorize_depth
 from ssr.utils.prompt import IGNORE_INDEX, SSRSpecialToken, insert_tor, string_truncation
+from transformers import PreTrainedTokenizer, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel
+
+
+def get_visual_embeds(
+    raw_image: np.ndarray
+    , raw_depth: np.ndarray
+    , clip_processor: CLIPProcessor
+    , clip_model: CLIPVisionModel
+    , siglip_processor: SiglipProcessor
+    , siglip_model: SiglipVisionModel
+) -> Tuple[np.ndarray, np.ndarray]:
+    with torch.no_grad():
+        image_embeds = (clip_model(**(clip_processor(images=raw_image, return_tensors="pt").to("cuda"))).last_hidden_state).squeeze(0).detach()
+        depth_embeds = (siglip_model(**(siglip_processor(images=raw_depth, return_tensors="pt").to("cuda"))).last_hidden_state).squeeze(0).detach()
+    return image_embeds, depth_embeds
 
 
 class SSRCoTDataset4Reasoning(Dataset):
@@ -18,23 +33,27 @@ class SSRCoTDataset4Reasoning(Dataset):
         , mamba_tokenizer: PreTrainedTokenizer
         , llm_tokenizer: PreTrainedTokenizer
         , max_length: Tuple[int, int, int]
+        , clip_processor: CLIPProcessor
+        , clip_model: CLIPVisionModel
+        , siglip_processor: SiglipProcessor
+        , siglip_model: SiglipVisionModel
     ) -> None:
         self.data_dir = data_dir
         self.n_tor = n_tor
-        self.data_paths = os.listdir(data_dir)
+        self.data = load_jsonl(os.path.join(data_dir, "ssr-cot.jsonl"))
         self.mamba_tokenizer = mamba_tokenizer
         self.llm_tokenizer = llm_tokenizer
         self.max_length = max_length
+        self.clip_processor = clip_processor
+        self.clip_model = clip_model
+        self.siglip_processor = siglip_processor
+        self.siglip_model = siglip_model
     
     def __len__(self) -> int:
-        return len(self.data_paths)
+        return len(self.data)
     
     def __getitem__(self, index: int) -> dict:
-        try:
-            data = np.load(os.path.join(self.data_dir, self.data_paths[index]), allow_pickle=True).item()
-        except Exception as e:
-            # print(f"Error: {e}")
-            return choice(self)
+        data = self.data[index]
         question, rationale, answer = data["question"], data["rationale"], data["answer"]
         question, rationale, answer = [string_truncation(text, self.mamba_tokenizer, max_len) for text, max_len in zip((question, rationale, answer), self.max_length)]
         rationale = insert_tor(rationale, n_tor=self.n_tor)
@@ -46,7 +65,9 @@ class SSRCoTDataset4Reasoning(Dataset):
         llm_input_ids, llm_attention_mask = llm_rationale.input_ids.squeeze(0), llm_rationale.attention_mask.squeeze(0)
         llm_labels = llm_input_ids.clone()
         llm_labels[llm_input_ids == self.llm_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)] = IGNORE_INDEX
-        image_embeds, depth_embeds = [torch.from_numpy(data[key]) for key in ("image_embeds", "depth_embeds")]
+        raw_image = np.array(Image.open(os.path.join(self.data_dir, data["image_path"])).convert("RGB"))
+        raw_depth = colorize_depth(os.path.join(self.data_dir, data["depth_path"]))
+        image_embeds, depth_embeds = get_visual_embeds(raw_image, raw_depth, self.clip_processor, self.clip_model, self.siglip_processor, self.siglip_model)
         mamba_attention_mask = torch.cat((torch.ones(image_embeds.size(0) + depth_embeds.size(0), dtype=torch.long), mamba_attention_mask))
         mamba_labels = torch.cat((
             torch.full((image_embeds.size(0) + depth_embeds.size(0) + mamba_question.input_ids.size(1),), IGNORE_INDEX, dtype=torch.long)

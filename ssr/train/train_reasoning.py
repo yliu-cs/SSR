@@ -1,4 +1,5 @@
 import os
+import json
 import torch
 import autoroot
 import numpy as np
@@ -11,21 +12,23 @@ from ssr.models.midi import MIDIConfig, MIDI
 from ssr.utils.prompt import SSRSpecialToken
 from argparse import ArgumentParser, Namespace
 from ssr.data.ssr_cot import SSRCoTDataset4Reasoning
-from transformers import AutoTokenizer, get_cosine_schedule_with_warmup
 from ssr.utils.misc import quiet, freeze_module, str_datetime, accelerate_print, count_params
+from transformers import AutoTokenizer, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel, get_cosine_schedule_with_warmup
 
 
 def get_args() -> Namespace:
     parser = ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "SSR-CoT"))
+    parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset"))
+    parser.add_argument("--clip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "clip-vit-large-patch14-336"))
+    parser.add_argument("--siglip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "siglip-so400m-patch14-384"))
     parser.add_argument("--n_tor", type=int, default=10)
-    parser.add_argument("--max_length", type=Tuple[int, int, int], default=(128, 1024, 128))
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--max_length", type=Tuple[int, int, int], default=(256, 1024, 256))
+    parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--mamba", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "mamba-130m-hf"))
     parser.add_argument("--llm", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-3B"))
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--batch_size_per_gpu", type=int, default=4)
-    parser.add_argument("--warmup_ratio", type=float, default=0.01)
+    parser.add_argument("--warmup_ratio", type=float, default=0.02)
     parser.add_argument("--output_dir", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-Reasoning"))
     return parser.parse_args()
 
@@ -72,6 +75,7 @@ def train(
 
 
 def main(args: Namespace) -> None:
+    args.output_dir = os.path.join(args.output_dir, str_datetime().strip("[]")[:-4])
     os.makedirs(args.output_dir, exist_ok=True)
     accelerator = Accelerator()
 
@@ -81,6 +85,9 @@ def main(args: Namespace) -> None:
     llm_tokenizer = AutoTokenizer.from_pretrained(args.llm)
     llm_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
 
+    accelerate_print(f"{str_datetime()} Loading CLIP and Siglip Models...", accelerator.is_main_process)
+    clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), CLIPVisionModel.from_pretrained(args.clip_path).to("cuda")
+    siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), SiglipVisionModel.from_pretrained(args.siglip_path).to("cuda")
     accelerate_print(f"{str_datetime()} Loading Dataset...", accelerator.is_main_process)
     dataset = SSRCoTDataset4Reasoning(
         data_dir=args.data_dir
@@ -88,13 +95,17 @@ def main(args: Namespace) -> None:
         , mamba_tokenizer=mamba_tokenizer
         , llm_tokenizer=llm_tokenizer
         , max_length=args.max_length
+        , clip_processor=clip_processor
+        , clip_model=clip_model
+        , siglip_processor=siglip_processor
+        , siglip_model=siglip_model
     )
 
     accelerate_print(f"{str_datetime()} Loading Model...", accelerator.is_main_process)
     model = MIDI(MIDIConfig(mamba_path_or_name=args.mamba, llm_path_or_name=args.llm))
     freeze_module(model.llm)
     accelerate_print(f"{str_datetime()} Model: {count_params(model)}", accelerator.is_main_process)
-
+ 
     accelerate_print(f"{str_datetime()} Preparing Optimizer, Dataloader, Scheduler...", accelerator.is_main_process)
     model = accelerator.prepare(model)
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.lr)
@@ -114,7 +125,7 @@ def main(args: Namespace) -> None:
     losses, _, _ = train(model, dataloader, optimizer, scheduler, accelerator, tor_token_id, args.epochs)
 
     np.save(os.path.join(args.output_dir, "losses.npy"), losses)
-    accelerate_print(f"{str_datetime()} Saving Checkpoint...", accelerator.is_main_process)
+    accelerate_print(f"{str_datetime()} Saving Checkpoint into {args.output_dir} ...", accelerator.is_main_process)
     accelerator.wait_for_everyone()
     accelerator.unwrap_model(model).save_pretrained(
         args.output_dir
@@ -122,6 +133,9 @@ def main(args: Namespace) -> None:
         , save_function=accelerator.save
         , state_dict=accelerator.get_state_dict(model)
     )
+    if accelerator.is_main_process:
+        with open(os.path.join(args.output_dir, "args.json"), "w") as json_file:
+            json.dump(vars(args), json_file, indent=4)
     accelerate_print(f"{str_datetime()} Done.", accelerator.is_main_process)
 
 

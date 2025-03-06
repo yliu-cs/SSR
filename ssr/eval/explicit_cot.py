@@ -7,39 +7,23 @@ from PIL import Image
 from tqdm import tqdm
 from random import choices
 from ast import literal_eval
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from qwen_vl_utils import process_vision_info
 from argparse import Namespace, ArgumentParser
 from ssr.utils.prompt import string_truncation
-from ssr.utils.misc import quiet, freeze_module, str_datetime, get_chunk
+from ssr.utils.misc import quiet, freeze_module, str_datetime, get_chunk, load_jsonl
 from transformers import AutoProcessor, AutoTokenizer, AutoModelForCausalLM, Qwen2_5_VLForConditionalGeneration
 
 
 def get_args() -> Namespace:
     parser = ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset", "SSR-CoT"))
+    parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset"))
     parser.add_argument("--vlm_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-VL-7B-Instruct"))
     parser.add_argument("--llm_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-14B-Instruct-1M"))
     parser.add_argument("--num_chunks", type=int, default=10)
     parser.add_argument("--chunk_idx", type=int, default=0)
-    parser.add_argument("--n", type=int, default=3000)
+    parser.add_argument("--n", type=int, default=5000)
     return parser.parse_args()
-
-
-def load_evaluate_data(data_dir: str, n: int) -> List[Dict[str, Any]]:
-    # return list(map(
-    #     lambda x: np.load(os.path.join(data_dir, x), allow_pickle=True).item()
-    #     , choices(os.listdir(data_dir), k=n)
-    # ))
-    ret = []
-    for file in choices(os.listdir(data_dir), k=n):
-        try:
-            data = np.load(os.path.join(data_dir, file), allow_pickle=True).item()
-            ret.append(data)
-        except Exception as e:
-            print(f"{str_datetime()}: {e=}")
-            continue
-    return ret
 
 
 def inference(
@@ -48,8 +32,6 @@ def inference(
     , processor: AutoProcessor
     , model: Qwen2_5_VLForConditionalGeneration
 ) -> str:
-    image = Image.fromarray(image)
-    image.resize((256, 256))
     messages = [{
         "role": "user"
         , "content": [
@@ -79,7 +61,7 @@ def get_score(
     , answer: str
     , llm: AutoModelForCausalLM
     , tokenizer: AutoTokenizer
-) -> float:
+) -> Tuple[str, float]:
     messages = [
         {
             "role": "system"
@@ -113,8 +95,8 @@ def get_score(
     llm_inputs = tokenizer([text], return_tensors="pt").to(llm.device)
     generated_ids = llm.generate(**llm_inputs, max_new_tokens=256)
     generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(llm_inputs.input_ids, generated_ids)]
-    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-    return literal_eval(response)["score"]
+    response = literal_eval(tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0])
+    return response["pred"], response["score"]
 
 
 def eval_item(
@@ -123,32 +105,19 @@ def eval_item(
     , vlm: Qwen2_5_VLForConditionalGeneration
     , llm: AutoModelForCausalLM
     , tokenizer: AutoTokenizer
-) -> None:
+    , data_dir: str
+) -> Tuple[Tuple[str, float], Tuple[str, float]]:
     question, rationale, answer = item["question"], item["rationale"], item["answer"]
     question, rationale, answer = (string_truncation(text, processor.tokenizer, max_len) for text, max_len in zip((question, rationale, answer), (256, 1024, 256)))
-    image = item["image"]
-    qa_response, qra_response = None, None
-    try:
-        qa_response = inference(image, question, processor, vlm)
-    except Exception as e:
-        print(f"{len(question)=}")
-        print(f"{e=}")
-    # print(f"{qa_response=}")
-    try:
-        qra_response = inference(image, f"{rationale}\nPlease answer the following questions following the above basic reasoning content.\n{question}", processor, vlm)
-    except Exception as e:
-        print(f"{len(rationale)=}")
-        print(f"{e=}")
-    # print(f"{qra_response=}")
-    if qa_response is None or qra_response is None:
-        return 0, 0
-    try:
-        qa_score = get_score(question, qa_response, answer, llm, tokenizer)
-        qra_score = get_score(question, qra_response, answer, llm, tokenizer)
-    except Exception as e:
-        print(f"{e=}")
-        qa_score, qra_score = 0, 0
-    return qa_score, qra_score
+    image = Image.open(os.path.join(data_dir, item["image_path"])).convert("RGB")
+    qa_response = inference(image, question, processor, vlm)
+    qra_response = inference(image, f"{rationale}\nPlease answer the following questions following the above basic reasoning content.\n{question}", processor, vlm)
+    qa_pred, qa_score = get_score(question, qa_response, answer, llm, tokenizer)
+    qra_pred, qra_score = get_score(question, qra_response, answer, llm, tokenizer)
+    qa_pred, qra_pred = qa_pred.strip().lower(), qra_pred.strip().lower()
+    if qa_pred not in ["yes", "no"] or qra_pred not in ["yes", "no"]:
+        raise ValueError
+    return (qa_pred, qa_score), (qra_pred, qra_score)
 
 
 def main(args: Namespace) -> None:
@@ -165,20 +134,29 @@ def main(args: Namespace) -> None:
     llm.eval()
 
     print(f"{str_datetime()}: Loading data from {args.data_dir}...")
-    data = load_evaluate_data(args.data_dir, args.n)
+    data = choices(load_jsonl(os.path.join(args.data_dir, "ssr-cot.jsonl")), k=args.n)
     data = get_chunk(data, args.num_chunks, args.chunk_idx)
 
-    qa_scores, qra_scores = [], []
+    qa_preds, qa_scores, qra_preds, qra_scores = [], [], [], []
     for item in tqdm(data, desc=f"[{args.chunk_idx}|{args.num_chunks}] Evaluating Explicit CoT", ncols=100):
-        qa_score, qra_score = eval_item(item, processor, vlm, llm, tokenizer)
+        try:
+            (qa_pred, qa_score), (qra_pred, qra_score) = eval_item(item, processor, vlm, llm, tokenizer, args.data_dir)
+        except Exception as e:
+            print(f"{str_datetime()}: {e=}")
+            continue
+        qa_preds.append(qa_pred)
         qa_scores.append(qa_score)
+        qra_preds.append(qra_pred)
         qra_scores.append(qra_score)
+    qa_preds = list(map(lambda x: 1 if x == "yes" else 0, qa_preds))
+    qra_preds = list(map(lambda x: 1 if x == "yes" else 0, qra_preds))
     
     save_dir = os.path.join(os.getcwd(), "media", "exp_cot_eval")
     print(f"{str_datetime()}: Saving results to {save_dir}...")
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    os.makedirs(save_dir, exist_ok=True)
+    np.save(os.path.join(save_dir, f"qa_preds_{args.chunk_idx}.npy"), qa_preds)
     np.save(os.path.join(save_dir, f"qa_scores_{args.chunk_idx}.npy"), qa_scores)
+    np.save(os.path.join(save_dir, f"qra_preds_{args.chunk_idx}.npy"), qra_preds)
     np.save(os.path.join(save_dir, f"qra_scores_{args.chunk_idx}.npy"), qra_scores)
 
 
