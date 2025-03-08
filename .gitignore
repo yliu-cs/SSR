@@ -3,3 +3,4 @@
 media
 test
 checkpoints
+*.flag

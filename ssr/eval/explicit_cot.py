@@ -22,7 +22,7 @@ def get_args() -> Namespace:
     parser.add_argument("--llm_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-14B-Instruct-1M"))
     parser.add_argument("--num_chunks", type=int, default=10)
     parser.add_argument("--chunk_idx", type=int, default=0)
-    parser.add_argument("--n", type=int, default=5000)
+    parser.add_argument("--n", type=int, default=10000)
     return parser.parse_args()
 
 

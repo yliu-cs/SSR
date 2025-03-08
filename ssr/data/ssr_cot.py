@@ -20,8 +20,8 @@ def get_visual_embeds(
     , siglip_model: SiglipVisionModel
 ) -> Tuple[np.ndarray, np.ndarray]:
     with torch.no_grad():
-        image_embeds = (clip_model(**(clip_processor(images=raw_image, return_tensors="pt").to("cuda"))).last_hidden_state).squeeze(0).detach()
-        depth_embeds = (siglip_model(**(siglip_processor(images=raw_depth, return_tensors="pt").to("cuda"))).last_hidden_state).squeeze(0).detach()
+        image_embeds = (clip_model(**(clip_processor(images=raw_image, return_tensors="pt").to(clip_model.device))).last_hidden_state).squeeze(0).detach()
+        depth_embeds = (siglip_model(**(siglip_processor(images=raw_depth, return_tensors="pt").to(siglip_model.device))).last_hidden_state).squeeze(0).detach()
     return image_embeds, depth_embeds
 
 

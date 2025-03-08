@@ -63,6 +63,7 @@ def train(
         for batch in progress_bar:
             outputs = model(**batch, tor_token_id=tor_token_id, alignment=True)
             loss, mamba_loss, llm_loss = [getattr(outputs, key) for key in ("loss", "mamba_loss", "llm_loss")]
+            assert not torch.any(torch.isnan(loss))
             accelerator.backward(loss)
             optimizer.step()
             scheduler.step()
@@ -86,8 +87,9 @@ def main(args: Namespace) -> None:
     llm_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
 
     accelerate_print(f"{str_datetime()} Loading CLIP and Siglip Models...", accelerator.is_main_process)
-    clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), CLIPVisionModel.from_pretrained(args.clip_path).to("cuda")
-    siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), SiglipVisionModel.from_pretrained(args.siglip_path).to("cuda")
+    clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), (CLIPVisionModel.from_pretrained(args.clip_path)).to(accelerator.device)
+    siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), (SiglipVisionModel.from_pretrained(args.siglip_path)).to(accelerator.device)
+    clip_model, siglip_model = accelerator.prepare(clip_model), accelerator.prepare(siglip_model)
     accelerate_print(f"{str_datetime()} Loading Dataset...", accelerator.is_main_process)
     dataset = SSRCoTDataset4Reasoning(
         data_dir=args.data_dir

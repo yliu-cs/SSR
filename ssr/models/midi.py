@@ -1,8 +1,8 @@
+import math
 import torch
 import autoroot
 from torch import nn
 from typing import Tuple
-from einops import rearrange
 from dataclasses import dataclass
 from transformers.utils import ModelOutput
 from transformers import PretrainedConfig, PreTrainedModel, MambaForCausalLM, Qwen2ForCausalLM
@@ -12,10 +12,10 @@ class MIDIConfig(PretrainedConfig):
     model_type = "MIDI"
     def __init__(
         self
-        , mamba_path_or_name: str = "mamba-130m-hf"
+        , mamba_path_or_name: str = "state-spaces/mamba-130m-hf"
         , image_dim: int = 1024
         , depth_dim: int = 1152
-        , llm_path_or_name: str = "Qwen2.5-3B"
+        , llm_path_or_name: str = "Qwen/Qwen2.5-3B"
         , **kwargs
     ) -> None:
         super().__init__(**kwargs)
@@ -39,20 +39,38 @@ class MIDI(PreTrainedModel):
         super().__init__(config)
         self.config = config
         self.mamba = MambaForCausalLM.from_pretrained(
-            config.mamba_path_or_name
-            # , torch_dtype=torch.bfloat16
+            self.config.mamba_path_or_name
             , trust_remote_code=True
         )
-        self.image_proj = nn.Linear(config.image_dim, self.mamba.config.hidden_size)
-        self.depth_proj = nn.Linear(config.depth_dim, self.mamba.config.hidden_size)
+        self.image_proj = nn.Sequential(
+            nn.Linear(self.config.image_dim, self.mamba.config.hidden_size)
+            , nn.GELU()
+            , nn.Linear(self.mamba.config.hidden_size, self.mamba.config.hidden_size)
+        )
+        self.depth_proj = nn.Sequential(
+            nn.Linear(self.config.depth_dim, self.mamba.config.hidden_size)
+            , nn.GELU()
+            , nn.Linear(self.mamba.config.hidden_size, self.mamba.config.hidden_size)
+        )
         self.llm = Qwen2ForCausalLM.from_pretrained(
-            config.llm_path_or_name
-            # , torch_dtype=torch.bfloat16
+            self.config.llm_path_or_name
             , attn_implementation="flash_attention_2"
             , trust_remote_code=True
         )
-        self.tor_proj = nn.Linear(self.mamba.config.hidden_size, self.llm.config.hidden_size)
+        self.tor_proj = nn.Sequential(
+            nn.Linear(self.mamba.config.hidden_size, self.llm.config.hidden_size)
+            , nn.GELU()
+            , nn.Linear(self.llm.config.hidden_size, self.llm.config.hidden_size)
+        )
         self.post_init()
+    
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5))
+            if module.bias is not None:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(module.weight)
+                bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+                nn.init.uniform_(module.bias, -bound, bound)
     
     def forward(
         self
@@ -79,10 +97,9 @@ class MIDI(PreTrainedModel):
         )
         mamba_last_hidden_state = mamba_outputs.hidden_states[-1]
         tor_embeds = self.tor_proj(mamba_last_hidden_state[:, image_embeds.size(1) + depth_embeds.size(1):, :][(mamba_input_ids == tor_token_id[0]), :])
-        tor_embeds = rearrange(tor_embeds, "(b l) d -> b l d", b=mamba_last_hidden_state.size(0))
         if alignment:
             llm_input_embeds = self.llm.get_input_embeddings()(llm_input_ids)
-            llm_input_embeds[(llm_input_ids == tor_token_id[1]), :] = rearrange(tor_embeds, "b l d -> (b l) d").to(llm_input_embeds.dtype)
+            llm_input_embeds[(llm_input_ids == tor_token_id[1]), :] = tor_embeds.to(llm_input_embeds.dtype)
             llm_outputs = self.llm(
                 inputs_embeds=llm_input_embeds
                 , attention_mask=llm_attention_mask
