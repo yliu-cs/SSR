@@ -87,8 +87,8 @@ def main(args: Namespace) -> None:
     llm_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
 
     accelerate_print(f"{str_datetime()} Loading CLIP and Siglip Models...", accelerator.is_main_process)
-    clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), (CLIPVisionModel.from_pretrained(args.clip_path)).to(accelerator.device)
-    siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), (SiglipVisionModel.from_pretrained(args.siglip_path)).to(accelerator.device)
+    clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), (CLIPVisionModel.from_pretrained(args.clip_path))
+    siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), (SiglipVisionModel.from_pretrained(args.siglip_path))
     clip_model, siglip_model = accelerator.prepare(clip_model), accelerator.prepare(siglip_model)
     accelerate_print(f"{str_datetime()} Loading Dataset...", accelerator.is_main_process)
     dataset = SSRCoTDataset4Reasoning(

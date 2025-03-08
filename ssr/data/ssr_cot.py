@@ -5,6 +5,7 @@ import numpy as np
 from torch import nn
 from PIL import Image
 from typing import Tuple
+from random import choice
 from torch.utils.data import Dataset
 from ssr.utils.misc import load_jsonl, colorize_depth
 from ssr.utils.prompt import IGNORE_INDEX, SSRSpecialToken, insert_tor, string_truncation
@@ -53,36 +54,40 @@ class SSRCoTDataset4Reasoning(Dataset):
         return len(self.data)
     
     def __getitem__(self, index: int) -> dict:
-        data = self.data[index]
-        question, rationale, answer = data["question"], data["rationale"], data["answer"]
-        question, rationale, answer = [string_truncation(text, self.mamba_tokenizer, max_len) for text, max_len in zip((question, rationale, answer), self.max_length)]
-        rationale = insert_tor(rationale, n_tor=self.n_tor)
-        mamba_question = self.mamba_tokenizer(question, add_special_tokens=False, return_tensors="pt")
-        mamba_rationale = self.mamba_tokenizer(rationale, add_special_tokens=False, return_tensors="pt")
-        mamba_input_ids = torch.cat((mamba_question.input_ids, mamba_rationale.input_ids), dim=1).squeeze(0)
-        mamba_attention_mask = torch.cat((mamba_question.attention_mask, mamba_rationale.attention_mask), dim=1).squeeze(0)
-        llm_rationale = self.llm_tokenizer(rationale, add_special_tokens=False, return_tensors="pt")
-        llm_input_ids, llm_attention_mask = llm_rationale.input_ids.squeeze(0), llm_rationale.attention_mask.squeeze(0)
-        llm_labels = llm_input_ids.clone()
-        llm_labels[llm_input_ids == self.llm_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)] = IGNORE_INDEX
-        raw_image = np.array(Image.open(os.path.join(self.data_dir, data["image_path"])).convert("RGB"))
-        raw_depth = colorize_depth(os.path.join(self.data_dir, data["depth_path"]))
-        image_embeds, depth_embeds = get_visual_embeds(raw_image, raw_depth, self.clip_processor, self.clip_model, self.siglip_processor, self.siglip_model)
-        mamba_attention_mask = torch.cat((torch.ones(image_embeds.size(0) + depth_embeds.size(0), dtype=torch.long), mamba_attention_mask))
-        mamba_labels = torch.cat((
-            torch.full((image_embeds.size(0) + depth_embeds.size(0) + mamba_question.input_ids.size(1),), IGNORE_INDEX, dtype=torch.long)
-            , mamba_rationale.input_ids.squeeze(0)
-        ))
-        return {
-            "mamba_input_ids": mamba_input_ids
-            , "mamba_attention_mask": mamba_attention_mask
-            , "mamba_labels": mamba_labels
-            , "llm_input_ids": llm_input_ids
-            , "llm_attention_mask": llm_attention_mask
-            , "llm_labels": llm_labels
-            , "image_embeds": image_embeds
-            , "depth_embeds": depth_embeds
-        }
+        try:
+            data = self.data[index]
+            question, rationale, answer = data["question"], data["rationale"], data["answer"]
+            question, rationale, answer = [string_truncation(text, self.mamba_tokenizer, max_len) for text, max_len in zip((question, rationale, answer), self.max_length)]
+            rationale = insert_tor(rationale, n_tor=self.n_tor)
+            mamba_question = self.mamba_tokenizer(question, add_special_tokens=False, return_tensors="pt")
+            mamba_rationale = self.mamba_tokenizer(rationale, add_special_tokens=False, return_tensors="pt")
+            mamba_input_ids = torch.cat((mamba_question.input_ids, mamba_rationale.input_ids), dim=1).squeeze(0)
+            mamba_attention_mask = torch.cat((mamba_question.attention_mask, mamba_rationale.attention_mask), dim=1).squeeze(0)
+            llm_rationale = self.llm_tokenizer(rationale, add_special_tokens=False, return_tensors="pt")
+            llm_input_ids, llm_attention_mask = llm_rationale.input_ids.squeeze(0), llm_rationale.attention_mask.squeeze(0)
+            llm_labels = llm_input_ids.clone()
+            llm_labels[llm_input_ids == self.llm_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)] = IGNORE_INDEX
+            raw_image = np.array(Image.open(os.path.join(self.data_dir, data["image_path"])).convert("RGB"))
+            raw_depth = colorize_depth(os.path.join(self.data_dir, data["depth_path"]))
+            image_embeds, depth_embeds = get_visual_embeds(raw_image, raw_depth, self.clip_processor, self.clip_model, self.siglip_processor, self.siglip_model)
+            mamba_attention_mask = torch.cat((torch.ones(image_embeds.size(0) + depth_embeds.size(0), dtype=torch.long), mamba_attention_mask))
+            mamba_labels = torch.cat((
+                torch.full((image_embeds.size(0) + depth_embeds.size(0) + mamba_question.input_ids.size(1),), IGNORE_INDEX, dtype=torch.long)
+                , mamba_rationale.input_ids.squeeze(0)
+            ))
+            return {
+                "mamba_input_ids": mamba_input_ids
+                , "mamba_attention_mask": mamba_attention_mask
+                , "mamba_labels": mamba_labels
+                , "llm_input_ids": llm_input_ids
+                , "llm_attention_mask": llm_attention_mask
+                , "llm_labels": llm_labels
+                , "image_embeds": image_embeds
+                , "depth_embeds": depth_embeds
+            }
+        except Exception as e:
+            print(f"{e=}")
+            return choice(self)
     
     def collate_fn(self, batch: list[dict]) -> dict:
         mamba_input_ids, mamba_attention_mask, mamba_labels = [[item[key] for item in batch] for key in ("mamba_input_ids", "mamba_attention_mask", "mamba_labels")]
