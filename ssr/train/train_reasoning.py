@@ -12,7 +12,7 @@ from ssr.models.midi import MIDIConfig, MIDI
 from ssr.utils.prompt import SSRSpecialToken
 from argparse import ArgumentParser, Namespace
 from ssr.data.ssr_cot import SSRCoTDataset4Reasoning
-from ssr.utils.misc import quiet, freeze_module, str_datetime, accelerate_print, count_params
+from ssr.utils.misc import quiet, freeze_module, str_datetime, count_params
 from transformers import AutoTokenizer, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel, get_cosine_schedule_with_warmup
 
 
@@ -56,14 +56,13 @@ def train(
     , accelerator: Accelerator
     , tor_token_id: Tuple[int, int]
     , epochs: int
-) -> None:
+) -> Tuple[List[float], List[float], List[float]]:
     losses, mamba_losses, llm_losses = [], [], []
     for epoch in range(epochs):
         progress_bar = tqdm(dataloader, desc=f"{str_datetime()} [Epoch {epoch + 1}/{epochs}]", disable=not accelerator.is_local_main_process)
         for batch in progress_bar:
             outputs = model(**batch, tor_token_id=tor_token_id, alignment=True)
             loss, mamba_loss, llm_loss = [getattr(outputs, key) for key in ("loss", "mamba_loss", "llm_loss")]
-            assert not torch.any(torch.isnan(loss))
             accelerator.backward(loss)
             optimizer.step()
             scheduler.step()
@@ -80,17 +79,17 @@ def main(args: Namespace) -> None:
     os.makedirs(args.output_dir, exist_ok=True)
     accelerator = Accelerator()
 
-    accelerate_print(f"{str_datetime()} Loading Tokenizers...", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Loading Tokenizers...")
     mamba_tokenizer = AutoTokenizer.from_pretrained(args.mamba)
     mamba_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
     llm_tokenizer = AutoTokenizer.from_pretrained(args.llm)
     llm_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
 
-    accelerate_print(f"{str_datetime()} Loading CLIP and Siglip Models...", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Loading CLIP and Siglip Models...")
     clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), (CLIPVisionModel.from_pretrained(args.clip_path))
     siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), (SiglipVisionModel.from_pretrained(args.siglip_path))
     clip_model, siglip_model = accelerator.prepare(clip_model), accelerator.prepare(siglip_model)
-    accelerate_print(f"{str_datetime()} Loading Dataset...", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Loading Dataset...")
     dataset = SSRCoTDataset4Reasoning(
         data_dir=args.data_dir
         , n_tor=args.n_tor
@@ -103,31 +102,30 @@ def main(args: Namespace) -> None:
         , siglip_model=siglip_model
     )
 
-    accelerate_print(f"{str_datetime()} Loading Model...", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Loading Model...")
     model = MIDI(MIDIConfig(mamba_path_or_name=args.mamba, llm_path_or_name=args.llm))
     freeze_module(model.llm)
-    accelerate_print(f"{str_datetime()} Model: {count_params(model)}", accelerator.is_main_process)
- 
-    accelerate_print(f"{str_datetime()} Preparing Optimizer, Dataloader, Scheduler...", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Model: {count_params(model)}")
     model = accelerator.prepare(model)
+ 
+    accelerator.print(f"{str_datetime()} Preparing Optimizer, Dataloader, Scheduler...")
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.lr)
     dataloader = DataLoader(dataset, batch_size=args.batch_size_per_gpu, shuffle=True, collate_fn=dataset.collate_fn)
-    num_training_steps = len(dataloader) * args.epochs // accelerator.num_processes
     scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer
-        , num_warmup_steps=int(num_training_steps * args.warmup_ratio)
-        , num_training_steps=num_training_steps
+        , num_warmup_steps=int((len(dataloader) * args.epochs) * args.warmup_ratio)
+        , num_training_steps=(len(dataloader) * args.epochs)
     )
     optimizer, dataloader, scheduler = accelerator.prepare(optimizer, dataloader, scheduler)
     tor_token_id = (
         mamba_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
         , llm_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
     )
-    accelerate_print(f"{str_datetime()} Training...", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Training...")
     losses, _, _ = train(model, dataloader, optimizer, scheduler, accelerator, tor_token_id, args.epochs)
 
     np.save(os.path.join(args.output_dir, "losses.npy"), losses)
-    accelerate_print(f"{str_datetime()} Saving Checkpoint into {args.output_dir} ...", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Saving Checkpoint into {args.output_dir} ...")
     accelerator.wait_for_everyone()
     accelerator.unwrap_model(model).save_pretrained(
         args.output_dir
@@ -138,7 +136,7 @@ def main(args: Namespace) -> None:
     if accelerator.is_main_process:
         with open(os.path.join(args.output_dir, "args.json"), "w") as json_file:
             json.dump(vars(args), json_file, indent=4)
-    accelerate_print(f"{str_datetime()} Done.", accelerator.is_main_process)
+    accelerator.print(f"{str_datetime()} Done.")
 
 
 if __name__ == "__main__":

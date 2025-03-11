@@ -34,6 +34,7 @@ class MIDIOutput(ModelOutput):
 
 
 class MIDI(PreTrainedModel):
+    config_class = MIDIConfig
     # Mamba-based Image-Depth Interpreter（MIDI）
     def __init__(self, config: MIDIConfig):
         super().__init__(config)
@@ -76,14 +77,14 @@ class MIDI(PreTrainedModel):
         self
         , mamba_input_ids: torch.LongTensor
         , mamba_attention_mask: torch.LongTensor
-        , mamba_labels: torch.LongTensor
-        , llm_input_ids: torch.LongTensor
-        , llm_attention_mask: torch.LongTensor
-        , llm_labels: torch.LongTensor
         , image_embeds: torch.Tensor
         , depth_embeds: torch.Tensor
         , tor_token_id: Tuple[int, int]
         , alignment: bool = False
+        , mamba_labels: torch.LongTensor = None
+        , llm_input_ids: torch.LongTensor = None
+        , llm_attention_mask: torch.LongTensor = None
+        , llm_labels: torch.LongTensor = None
     ) -> MIDIOutput:
         image_embeds = self.image_proj(image_embeds)
         depth_embeds = self.depth_proj(depth_embeds)
