@@ -139,7 +139,7 @@ class SSRCoTDataset4VLM(Dataset):
         self.siglip_model = siglip_model
         self.data = load_jsonl(os.path.join(self.data_dir, "ssr-cot.jsonl"))
         if llava:
-            self.data += load_jsonl(os.path.join(self.data_dir, "LLaVA-Instruct-150K", "ssr_llava_inst_2m.jsonl"))
+            self.data += load_jsonl(os.path.join(self.data_dir, "LLaVA-Instruct-150K", "ssr_llava_inst.jsonl"))
     
     def __len__(self) -> int:
         return len(self.data)

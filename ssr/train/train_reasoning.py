@@ -25,7 +25,7 @@ def get_args() -> Namespace:
     parser.add_argument("--max_length", type=Tuple[int, int, int], default=(256, 1024, 256))
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--mamba", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "mamba-130m-hf"))
-    parser.add_argument("--llm", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-3B"))
+    parser.add_argument("--llm", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-7B"))
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--batch_size_per_gpu", type=int, default=4)
     parser.add_argument("--warmup_ratio", type=float, default=0.02)

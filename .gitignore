@@ -4,3 +4,5 @@ media
 test
 checkpoints
 *.flag
+__pycache__
+figure

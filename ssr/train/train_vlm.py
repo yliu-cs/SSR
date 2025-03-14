@@ -137,13 +137,13 @@ def main(args: Namespace) -> None:
     accelerator.print(f"{str_datetime()} Saving Checkpoint into {args.output_dir} ...")
     accelerator.wait_for_everyone()
     accelerator.unwrap_model(midi).save_pretrained(
-        args.output_dir
+        os.path.join(args.output_dir, "MIDI")
         , is_main_process=accelerator.is_main_process
         , save_function=accelerator.save
         , state_dict=accelerator.get_state_dict(midi)
     )
     accelerator.unwrap_model(vlm).save_pretrained(
-        args.output_dir
+        os.path.join(args.output_dir, "SSRVLM")
         , is_main_process=accelerator.is_main_process
         , save_function=accelerator.save
         , state_dict=accelerator.get_state_dict(vlm)
