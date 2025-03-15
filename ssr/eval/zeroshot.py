@@ -2,16 +2,19 @@ import os
 import json
 import torch
 import autoroot
+import depth_pro
 import numpy as np
 from PIL import Image
 from tqdm.auto import tqdm
 from ssr.models.midi import MIDI
 from ssr.models.vlm import SSRVLM
+from depth_pro.depth_pro import DepthPro
+from torchvision.transforms import Compose
 from qwen_vl_utils import process_vision_info
 from argparse import Namespace, ArgumentParser
 from typing import List, Dict, Union, Tuple, Any
 from ssr.utils.prompt import SSRSpecialToken, insert_tor
-from ssr.utils.misc import quiet, str_datetime, change_ext, colorize_depth
+from ssr.utils.misc import quiet, str_datetime, change_ext, colorize_depth, freeze_module
 from transformers import AutoTokenizer, Qwen2_5_VLProcessor, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel, PreTrainedTokenizer
 
 
@@ -27,6 +30,7 @@ def get_args() -> Namespace:
     parser.add_argument("--mamba", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "mamba-130m-hf"))
     parser.add_argument("--clip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "clip-vit-large-patch14-336"))
     parser.add_argument("--siglip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "siglip-so400m-patch14-384"))
+    parser.add_argument("--depth_pro_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "DepthPro"))
     parser.add_argument("--pretrained_midi", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-Reasoning", "2025-03-08 23:35:10"))
     parser.add_argument("--pretrained_vlm", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-VL-3B-Instruct"))
     parser.add_argument("--n_tor", type=int, default=10)
@@ -99,6 +103,26 @@ def load_data(data_dir: str, benchmark: str) -> List[str]:
     return func_map[benchmark](data_dir)
 
 
+def load_depth_pro(model_path: str, device: torch.device) -> Tuple[DepthPro, Compose]:
+    model, transform = depth_pro.create_model_and_transforms(
+        device=device
+        , checkpoint_uri=os.path.join(model_path, "depth_pro.pt")
+    )
+    freeze_module(model)
+    model.eval()
+    return model, transform
+
+
+def get_depth(image_path: str, depthpro: DepthPro, depth_transform: Compose) -> torch.Tensor:
+    image = Image.open(image_path).convert("RGB")
+    image, _, f_px = depth_pro.load_pil(image)
+    image = depth_transform(image)
+    image = image.to("cuda")
+    prediction = depthpro.infer(image, f_px=f_px)
+    depth = prediction["depth"]
+    return depth
+
+
 def prepare_data(
     sample: Dict[str, str]
     , mamba_tokenizer: PreTrainedTokenizer
@@ -108,15 +132,25 @@ def prepare_data(
     , siglip_model: SiglipVisionModel
     , vlm_processor: Qwen2_5_VLProcessor
     , device: torch.device
+    , depthpro: DepthPro
+    , depth_transform: Compose
     , n_tor: int = 10
     , image_size: Tuple[int, int] = (256, 256)
 ) -> Dict[str, torch.Tensor]:
-    question, image_path, depth_path = sample["question"], sample["image_path"], sample["depth_path"]
+    question, image_path, depth_path = sample["question"], sample["image_path"], None
+    if "depth_path" in sample:
+        depth_path = sample["depth_path"]
     mamba_question = mamba_tokenizer(question + insert_tor("", n_tor), add_special_tokens=False, return_tensors="pt")
     mamba_input_ids = mamba_question.input_ids
     mamba_attention_mask = mamba_question.attention_mask
     raw_image = Image.open(image_path).convert("RGB")
-    raw_depth = colorize_depth(depth_path)
+    if depth_path is not None:
+        raw_depth = colorize_depth(depth_path)
+    else:
+        raw_depth = get_depth(image_path, depthpro, depth_transform).detach().cpu().numpy()
+        raw_depth = (raw_depth - raw_depth.min()) / (raw_depth.max() - raw_depth.min()) * 255.0
+        raw_depth = raw_depth.astype(np.uint8)
+        raw_depth = np.stack([raw_depth, raw_depth, raw_depth], axis=-1)
     image_embeds, depth_embeds = get_visual_embeds(np.array(raw_image), raw_depth, clip_processor, clip_model, siglip_processor, siglip_model)
     mamba_attention_mask = torch.cat((torch.ones(image_embeds.size(1) + depth_embeds.size(1), dtype=mamba_attention_mask.dtype).unsqueeze(0), mamba_attention_mask), dim=1)
     messages = [{
@@ -162,6 +196,8 @@ def inference(
     , tor_token_id: Tuple[int, int]
     , image_size: Tuple[int, int]
     , device: torch.device
+    , depthpro: DepthPro
+    , depth_transform: Compose
 ) -> None:
     sample = prepare_data(
         sample=sample
@@ -172,6 +208,8 @@ def inference(
         , siglip_model=siglip_model
         , vlm_processor=vlm_processor
         , device=device
+        , depthpro=depthpro
+        , depth_transform=depth_transform
         , n_tor=n_tor
         , image_size=image_size
     )
@@ -213,12 +251,14 @@ def evaluate(
     , tor_token_id: Tuple[int, int]
     , image_size: Tuple[int, int]
     , device: torch.device
+    , depthpro: DepthPro
+    , depth_transform: Compose
 ) -> None:
-    if isinstance(data, dict):
-        result = {}
-        for task in data:
-            result[task] = []
-            for sample in tqdm(data[task], desc=f"Evaluating SpatialBench {task}"):
+    result = {}
+    for task in data.keys():
+        result[task] = []
+        for sample in tqdm(data[task], desc=f"Evaluating {task}"):
+            try:
                 answer = sample["answer"]
                 response = inference(
                     sample
@@ -229,33 +269,23 @@ def evaluate(
                     , n_tor, tor_token_id
                     , image_size
                     , device
+                    , depthpro, depth_transform
                 )
                 result[task].append({
-                    "response": response
+                    "image_path": sample["image_path"]
+                    , "question": sample["question"]
+                    , "response": response
                     , "answer": answer
                 })
-    else:
-        result = []
-        for sample in tqdm(data, desc="Evaluating MME"):
-            response = inference(
-                sample
-                , midi, vlm
-                , mamba_tokenizer, vlm_processor
-                , clip_processor, clip_model
-                , siglip_processor, siglip_model
-                , n_tor, tor_token_id
-                , image_size
-            )
-            result.append({
-                "response": response
-                , "answer": sample["answer"]
-            })
+            except Exception as e:
+                print(f"Error: {e}")
+                continue
     return result
 
 
 def calc_spatialbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> None:
     metrics = {}
-    for task in TASK["SpatialBench"]:
+    for task in full_result.keys():
         result = full_result[task]
         if task in ["reach","size"]:
             scores, full_scores = 0, 0
@@ -284,7 +314,8 @@ def calc_spatialbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> N
         elif task.strip() in ["existence"]: 
             scores, full_scores = 0, 0
             for j in range(len(result)):
-                if j%2==1: continue
+                if j % 2 == 1:
+                    continue
                 pos_response, pos_gt = result[j]["response"], result[j]["answer"]
                 neg_response, neg_gt = result[j + 1]["response"], result[j + 1]["answer"]
                 if (pos_gt in pos_response) and (neg_gt in neg_response):
@@ -301,6 +332,18 @@ def calc_spatialbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> N
     return metrics
 
 
+def save_mme_result(result: Dict[str, List[Dict[str, Any]]], save_dir: str) -> None:
+    os.makedirs(save_dir, exist_ok=True)
+    for task in result.keys():
+        with open(os.path.join(save_dir, f"{task}.txt"), "w") as f:
+            for item in result[task]:
+                image_path = item["image_path"].split(os.sep)[-1]
+                question = item["question"].replace("\n", " ")  
+                answer = item["answer"].replace("\n", " ")
+                response = item["response"].replace("\t", "").replace("\n", "")
+                f.write(f"{image_path}\t{question}\t{answer}\t{response}\n")
+
+
 def main(args: Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -312,12 +355,18 @@ def main(args: Namespace) -> None:
     print(f"{str_datetime()} Loading CLIP and Siglip Models...")
     clip_processor, clip_model = CLIPProcessor.from_pretrained(args.clip_path), (CLIPVisionModel.from_pretrained(args.clip_path)).to(device)
     siglip_processor, siglip_model = SiglipProcessor.from_pretrained(args.siglip_path), (SiglipVisionModel.from_pretrained(args.siglip_path)).to(device)
+    freeze_module(clip_model)
+    freeze_module(siglip_model)
+    print(f"{str_datetime()} Loading Depth Pro Model...")
+    depthpro, depth_transform = load_depth_pro(args.depth_pro_path, device)
 
     print(f"{str_datetime()} Loading MIDI Model...")
     midi = MIDI.from_pretrained(args.pretrained_midi, device_map=device)
+    freeze_module(midi)
     midi.eval()
     print(f"{str_datetime()} Loading SSRVLM Model...")
     vlm = SSRVLM.from_pretrained(args.pretrained_vlm, device_map=device)
+    freeze_module(vlm)
     vlm.eval()
 
     print(f"{str_datetime()} Loading Data...")
@@ -333,14 +382,15 @@ def main(args: Namespace) -> None:
         , args.n_tor, tor_token_id
         , args.image_size
         , device
+        , depthpro, depth_transform
     )
     print(f"{str_datetime()} Calculating Metrics...")
     if args.benchmark == "SpatialBench":
         metrics = calc_spatialbench_metrics(result)
         for task, score in metrics.items():
             print(f"{str_datetime()} {task:<10}: {round(score, 1)}")
-    # elif args.benchmark == "MME":
-    #     calc_mme_metrics(result)
+    elif args.benchmark == "MME":
+        save_mme_result(result, os.path.join(args.data_dir, args.benchmark, "Results", str_datetime().strip("[]")[:-4]))
 
 
 if __name__ == "__main__":
