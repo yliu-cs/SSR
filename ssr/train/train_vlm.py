@@ -10,10 +10,11 @@ from ssr.models.midi import MIDI
 from ssr.models.vlm import SSRVLM
 from accelerate import Accelerator
 from torch.utils.data import DataLoader
+from peft import LoraConfig, get_peft_model
 from ssr.utils.prompt import SSRSpecialToken
 from ssr.data.ssr_cot import SSRCoTDataset4VLM
 from argparse import ArgumentParser, Namespace
-from ssr.utils.misc import quiet, str_datetime, count_params
+from ssr.utils.misc import quiet, str_datetime, count_params, freeze_module
 from transformers import AutoTokenizer, Qwen2_5_VLProcessor, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel, get_cosine_schedule_with_warmup
 
 
@@ -33,7 +34,11 @@ def get_args() -> Namespace:
     parser.add_argument("--batch_size_per_gpu", type=int, default=4)
     parser.add_argument("--warmup_ratio", type=float, default=0.02)
     parser.add_argument("--output_dir", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-VLM"))
-    parser.add_argument("--llava", action="store_false")
+    parser.add_argument("--llava", action="store_true")
+    parser.add_argument("--lora", action="store_true")
+    parser.add_argument("--lora_r", type=int, default=64)
+    parser.add_argument("--lora_alpha", type=int, default=16)
+    parser.add_argument("--lora_dropout", type=float, default=0.05)
     return parser.parse_args()
 
 
@@ -51,14 +56,15 @@ def train(
     for epoch in range(epochs):
         progress_bar = tqdm(dataloader, desc=f"{str_datetime()} [Epoch {epoch + 1}/{epochs}]", disable=not accelerator.is_local_main_process)
         for batch in progress_bar:
-            tor_embeds = midi(
-                mamba_input_ids=batch["mamba_input_ids"]
-                , mamba_attention_mask=batch["mamba_attention_mask"]
-                , image_embeds=batch["image_embeds"]
-                , depth_embeds=batch["depth_embeds"]
-                , tor_token_id=tor_token_id
-                , alignment=False
-            ).tor_embeds
+            with torch.no_grad():
+                tor_embeds = midi(
+                    mamba_input_ids=batch["mamba_input_ids"]
+                    , mamba_attention_mask=batch["mamba_attention_mask"]
+                    , image_embeds=batch["image_embeds"]
+                    , depth_embeds=batch["depth_embeds"]
+                    , tor_token_id=tor_token_id
+                    , alignment=False
+                ).tor_embeds
             outputs = vlm(
                 input_ids=batch["vlm_input_ids"]
                 , attention_mask=batch["vlm_attention_mask"]
@@ -82,6 +88,7 @@ def main(args: Namespace) -> None:
     args.output_dir = os.path.join(args.output_dir, str_datetime().strip("[]")[:-4])
     os.makedirs(args.output_dir, exist_ok=True)
     accelerator = Accelerator()
+    accelerator.print(f"{str_datetime()} {args.output_dir=}")
 
     accelerator.print(f"{str_datetime()} Loading Tokenizer & Processor...")
     mamba_tokenizer = AutoTokenizer.from_pretrained(args.mamba)
@@ -112,11 +119,20 @@ def main(args: Namespace) -> None:
     accelerator.print(f"{str_datetime()} Loading Model...")
     midi = MIDI.from_pretrained(args.pretrained_midi)
     del midi.llm
+    freeze_module(midi)
     vlm = SSRVLM.from_pretrained(args.pretrained_vlm)
-    accelerator.print(f"{str_datetime()} MIDI: {count_params(midi)}")
+    if args.lora:
+        lora_config = LoraConfig(
+            r=args.lora_r
+            , lora_alpha=args.lora_alpha
+            , lora_dropout=args.lora_dropout
+            , task_type="CAUSAL_LM"
+            , target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        )
+        vlm = get_peft_model(vlm, lora_config)
     accelerator.print(f"{str_datetime()} VLM: {count_params(vlm)}")
     midi, vlm = accelerator.prepare(midi, vlm)
- 
+
     accelerator.print(f"{str_datetime()} Preparing Optimizer, Dataloader, Scheduler...")
     optimizer = torch.optim.AdamW(params=list(midi.parameters()) + list(vlm.parameters()), lr=args.lr)
     dataloader = DataLoader(dataset, batch_size=args.batch_size_per_gpu, shuffle=True, collate_fn=dataset.collate_fn)

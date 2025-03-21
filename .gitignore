@@ -6,3 +6,5 @@ checkpoints
 *.flag
 __pycache__
 figure
+qwenvl.py
+eval.sh

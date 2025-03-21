@@ -164,7 +164,7 @@ class SSRCoTDataset4VLM(Dataset):
                     "role": "user"
                     , "content": [
                         {"type": "image", "image": raw_image.resize(self.image_size)}
-                        , {"type": "text", "text": question + rationale}
+                        , {"type": "text", "text": f"{rationale}\n{question}"}
                     ]
                 }
                 , {

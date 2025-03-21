@@ -6,4 +6,4 @@ else
     echo "create train_vlm.flag, continue"
 fi
 
-accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_vlm.py
+accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_vlm.py --lora --llava

@@ -24,14 +24,20 @@ def main(args: Namespace):
     colors = [
         ("#B1C5FD", "#7B87FF")
         , ("#EEB7C8", "#DF9B9B")
-        , ("#AABCBC", "#609073")
         , ("#C4B4E5", "#A373C8")
+        , ("#AABCBC", "#609073")
     ]
 
     plt.rc("font", **{"family": "Times New Roman", "size": 12})
     fig, ax = plt.subplots()
     losses = []
-    versions = sorted(os.listdir(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}")))
+    versions = sorted(
+        os.listdir(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}"))
+        , key=lambda x: (
+            os.path.basename(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["llm"])
+            , os.path.basename(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["mamba"])
+        )
+    )
     for i, version in enumerate(versions):
         loss_path = os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", version, "losses.npy")
         if not os.path.exists(loss_path):
@@ -43,12 +49,12 @@ def main(args: Namespace):
         else:
             mamba = "Mamba-" + os.path.basename(json.load(open(os.path.join(version_cfg["pretrained_midi"], "args.json")))["mamba"]).split("-")[1].upper()
             vlm = "-".join(os.path.basename(version_cfg["pretrained_vlm"]).split("-")[:-1])
-        ax.plot(range(len(loss)), loss, color=colors[i][0], linestyle="-", alpha=0.5)
-        smoothed_loss = gaussian_filter1d(loss, sigma=300)
-        ax.plot(range(len(smoothed_loss)), smoothed_loss, color=colors[i][1], linestyle="-", linewidth=3, label=f"{mamba} & {llm if args.stage == 'Reasoning' else vlm}")
+        ax.plot(range(len(loss)), loss, color=colors[i][0], linestyle="-", alpha=0.5, zorder=1)
+        smoothed_loss = gaussian_filter1d(loss, sigma=300 if args.stage == "Reasoning" else 800)
+        ax.plot(range(len(smoothed_loss)), smoothed_loss, color=colors[i][1], linestyle="-", linewidth=3, label=f"{mamba} & {llm if args.stage == 'Reasoning' else vlm}", zorder=100)
         losses += loss
     ax.set_xlim(left=0, right=len(losses) // len(versions))
-    ax.set_ylim(bottom=min(losses) - 0.1, top=sorted(losses)[math.ceil(len(losses) * 0.99)])
+    ax.set_ylim(bottom=min(losses) - 0.1, top=sorted(losses)[math.ceil(len(losses) * (0.9985 if args.stage == "VLM" else 0.99))])
     ax.xaxis.set_major_locator(plt.MultipleLocator(10000))
     ax.yaxis.set_major_locator(plt.MultipleLocator(0.5))
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: int(x // 10000)))

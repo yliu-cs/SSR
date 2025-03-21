@@ -8,6 +8,7 @@ from PIL import Image
 from tqdm.auto import tqdm
 from ssr.models.midi import MIDI
 from ssr.models.vlm import SSRVLM
+from datasets import load_dataset
 from depth_pro.depth_pro import DepthPro
 from torchvision.transforms import Compose
 from qwen_vl_utils import process_vision_info
@@ -27,15 +28,17 @@ TASK = {
 def get_args() -> Namespace:
     parser = ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset"))
-    parser.add_argument("--mamba", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "mamba-130m-hf"))
+    parser.add_argument("--mamba", type=str, default=None)
     parser.add_argument("--clip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "clip-vit-large-patch14-336"))
     parser.add_argument("--siglip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "siglip-so400m-patch14-384"))
     parser.add_argument("--depth_pro_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "DepthPro"))
     parser.add_argument("--pretrained_midi", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-Reasoning", "2025-03-08 23:35:10"))
     parser.add_argument("--pretrained_vlm", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-VL-3B-Instruct"))
+    parser.add_argument("--pretrained_ssr", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-VLM", "2025-03-19 17:14:10"))
     parser.add_argument("--n_tor", type=int, default=10)
     parser.add_argument("--image_size", type=Tuple[int, int], default=(256, 256))
-    parser.add_argument("--benchmark", type=str, default="SpatialBench", choices=["SpatialBench", "MME"])
+    parser.add_argument("--benchmark", type=str, default="SpatialBench", choices=["SpatialBench", "CV-Bench", "MME"])
+    parser.add_argument("--zeroshot", action="store_true")
     return parser.parse_args()
 
 
@@ -60,18 +63,35 @@ def load_spatialbench_data(data_dir: str) -> List[str]:
             data[task] = json.load(f)
         suffix = ""
         if task == "existence":
-            suffix = "Response \"Yes\" or \"No\" only."
-        elif task == "counting":
-            suffix = "Response the number only"
+            suffix = " Response \"Yes\" or \"No\" only."
         data[task] = list(map(
             lambda x: {
                 "question": x["question"] + suffix
                 , "answer": x["answer"]
                 , "image_path": os.path.join(data_dir, x["image"])
-                , "depth_path": change_ext(os.path.join(data_dir, os.sep.join([f"{x['image'].split(os.sep)[0]}_d"] + x["image"].split(os.sep)[1:])), "png")
+                # , "depth_path": change_ext(os.path.join(data_dir, os.sep.join([f"{x['image'].split(os.sep)[0]}_d"] + x["image"].split(os.sep)[1:])), "png")
             }
             , data[task]
         ))
+    return data
+
+
+def load_cvbench_data(data_dir: str) -> List[str]:
+    data = {}
+    for item in load_dataset(data_dir, split="test"):
+        task = item["task"]
+        if task not in data:
+            data[task] = []
+        prompt = item["prompt"]
+        if task in ("Depth", "Distance"):
+            prompt = prompt.replace("\n(A)", " Select from the following choices. Answer with the option's letter from the given choices directly.\n(A)")
+        else:
+            prompt = prompt.replace("Select from the following choices.", "Select from the following choices. Answer with the option's letter from the given choices directly.")
+        data[task].append({
+            "question": prompt
+            , "answer": item["answer"][1]
+            , "image_path": os.path.join(data_dir, item["filename"])
+        })
     return data
 
 
@@ -97,6 +117,7 @@ def load_mme_data(data_dir: str) -> List[str]:
 def load_data(data_dir: str, benchmark: str) -> List[str]:
     func_map = {
         "SpatialBench": load_spatialbench_data
+        , "CV-Bench": load_cvbench_data
         , "MME": load_mme_data
     }
     assert benchmark in func_map
@@ -167,9 +188,6 @@ def prepare_data(
     vlm_attention_mask = vlm_inputs.attention_mask
     vlm_pixel_values = vlm_inputs.pixel_values
     vlm_image_grid_thw = vlm_inputs.image_grid_thw
-    # print(f"{mamba_input_ids.size()=} {mamba_attention_mask.size()=}")
-    # print(f"{image_embeds.size()=} {depth_embeds.size()=}")
-    # print(f"{vlm_input_ids.size()=} {vlm_attention_mask.size()=} {vlm_pixel_values.size()=} {vlm_image_grid_thw.size()=}")
     return {
         "mamba_input_ids": mamba_input_ids.to(device)
         , "mamba_attention_mask": mamba_attention_mask.to(device)
@@ -234,7 +252,9 @@ def inference(
         )
     generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(sample["vlm_input_ids"], generated_ids)]
     output_text = vlm_processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-    return output_text[0]
+    response = output_text[0]
+    response = response.replace("Answer:", "").strip()
+    return response
 
 
 def evaluate(
@@ -332,6 +352,19 @@ def calc_spatialbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> N
     return metrics
 
 
+def calc_cvbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> None:
+    metrics = {}
+    for task in full_result.keys():
+        result = full_result[task]
+        scores, full_scores = 0, 0
+        for j in range(len(result)):
+            if result[j]["answer"] in result[j]["response"]:
+                scores = scores + 1
+            full_scores = full_scores + 1
+        metrics[task] = 100 * scores / full_scores
+    return metrics
+
+
 def save_mme_result(result: Dict[str, List[Dict[str, Any]]], save_dir: str) -> None:
     os.makedirs(save_dir, exist_ok=True)
     for task in result.keys():
@@ -346,6 +379,10 @@ def save_mme_result(result: Dict[str, List[Dict[str, Any]]], save_dir: str) -> N
 
 def main(args: Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    args.pretrained_midi = args.pretrained_midi.replace("$", " ")
+    args.mamba = json.load(open(os.path.join(args.pretrained_midi, "args.json")))["mamba"]
+    if not args.zeroshot:
+        args.pretrained_vlm = json.load(open(os.path.join(args.pretrained_ssr, "args.json")))["pretrained_vlm"]
 
     print(f"{str_datetime()} Loading Tokenizer & Processor...")
     mamba_tokenizer = AutoTokenizer.from_pretrained(args.mamba)
@@ -361,11 +398,14 @@ def main(args: Namespace) -> None:
     depthpro, depth_transform = load_depth_pro(args.depth_pro_path, device)
 
     print(f"{str_datetime()} Loading MIDI Model...")
-    midi = MIDI.from_pretrained(args.pretrained_midi, device_map=device)
+    midi = MIDI.from_pretrained(args.pretrained_midi if args.zeroshot else os.path.join(args.pretrained_ssr, "MIDI"), device_map=device)
     freeze_module(midi)
     midi.eval()
     print(f"{str_datetime()} Loading SSRVLM Model...")
     vlm = SSRVLM.from_pretrained(args.pretrained_vlm, device_map=device)
+    if not args.zeroshot:
+        print(f"{str_datetime()} Loading SSRVLM Adapter...")
+        vlm.load_adapter(os.path.join(args.pretrained_ssr, "SSRVLM"))
     freeze_module(vlm)
     vlm.eval()
 
@@ -384,9 +424,20 @@ def main(args: Namespace) -> None:
         , device
         , depthpro, depth_transform
     )
+    save_dir = os.path.join(os.getcwd(), "media", "results", args.benchmark)
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f"{str_datetime().strip('[]')[:-4]}.npy")
+    print(f"{str_datetime()} Saving Results to {save_path}...")
+    np.save(save_path, result)
+
+    print(f"{str_datetime()} {os.path.basename(args.mamba)} {os.path.basename(args.pretrained_vlm)} {args.benchmark} {args.zeroshot=}")
     print(f"{str_datetime()} Calculating Metrics...")
     if args.benchmark == "SpatialBench":
         metrics = calc_spatialbench_metrics(result)
+        for task, score in metrics.items():
+            print(f"{str_datetime()} {task:<10}: {round(score, 1)}")
+    elif args.benchmark == "CV-Bench":
+        metrics = calc_cvbench_metrics(result)
         for task, score in metrics.items():
             print(f"{str_datetime()} {task:<10}: {round(score, 1)}")
     elif args.benchmark == "MME":
