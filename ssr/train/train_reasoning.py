@@ -24,7 +24,7 @@ def get_args() -> Namespace:
     parser.add_argument("--n_tor", type=int, default=10)
     parser.add_argument("--max_length", type=Tuple[int, int, int], default=(256, 1024, 256))
     parser.add_argument("--lr", type=float, default=2e-5)
-    parser.add_argument("--mamba", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "mamba-790m-hf"))
+    parser.add_argument("--mamba", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "mamba-130m-hf"))
     parser.add_argument("--llm", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-3B"))
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--batch_size_per_gpu", type=int, default=4)
@@ -75,10 +75,11 @@ def train(
 
 
 def main(args: Namespace) -> None:
-    args.output_dir = os.path.join(args.output_dir, str_datetime().strip("[]")[:-4])
-    os.makedirs(args.output_dir, exist_ok=True)
     accelerator = Accelerator()
-    accelerator.print(f"{str_datetime()} {args.output_dir=}")
+    if accelerator.is_main_process:
+        args.output_dir = os.path.join(args.output_dir, str_datetime().strip("[]")[:-4])
+        os.makedirs(args.output_dir, exist_ok=True)
+        accelerator.print(f"{str_datetime()} {args.output_dir=}")
 
     accelerator.print(f"{str_datetime()} Loading Tokenizers...")
     mamba_tokenizer = AutoTokenizer.from_pretrained(args.mamba)

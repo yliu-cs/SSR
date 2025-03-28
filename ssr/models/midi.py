@@ -63,15 +63,15 @@ class MIDI(PreTrainedModel):
             , nn.GELU()
             , nn.Linear(self.llm.config.hidden_size, self.llm.config.hidden_size)
         )
-        self.post_init()
+        # self.post_init()
     
-    def _init_weights(self, module: nn.Module) -> None:
-        if isinstance(module, nn.Linear):
-            nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5))
-            if module.bias is not None:
-                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(module.weight)
-                bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-                nn.init.uniform_(module.bias, -bound, bound)
+    # def _init_weights(self, module: nn.Module) -> None:
+    #     if isinstance(module, nn.Linear):
+    #         nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5))
+    #         if module.bias is not None:
+    #             fan_in, _ = nn.init._calculate_fan_in_and_fan_out(module.weight)
+    #             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+    #             nn.init.uniform_(module.bias, -bound, bound)
     
     def forward(
         self

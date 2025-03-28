@@ -22,22 +22,32 @@ def main(args: Namespace):
     os.makedirs(args.figure_dir, exist_ok=True)
 
     colors = [
-        ("#B1C5FD", "#7B87FF")
-        , ("#EEB7C8", "#DF9B9B")
+        ("#E1F2FC", "#5AA0F7")
+        , ("#B1C5FD", "#7B87FF")
+        , ("#FBB3E5", "#E95A85")
         , ("#C4B4E5", "#A373C8")
-        , ("#AABCBC", "#609073")
     ]
 
     plt.rc("font", **{"family": "Times New Roman", "size": 12})
     fig, ax = plt.subplots()
     losses = []
-    versions = sorted(
-        os.listdir(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}"))
-        , key=lambda x: (
-            os.path.basename(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["llm"])
-            , os.path.basename(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["mamba"])
+    versions = list(filter(lambda x: os.path.exists(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "losses.npy")), os.listdir(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}"))))
+    if args.stage == "Reasoning":
+        versions = sorted(
+            versions
+            , key=lambda x: (
+                os.path.basename(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["llm"])
+                , os.path.basename(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["mamba"])
+            )
         )
-    )
+    elif args.stage == "VLM":
+        versions = sorted(
+            versions
+            , key=lambda x: (
+                os.path.basename(json.load(open(os.path.join(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["pretrained_midi"], "args.json")))["mamba"])
+                , os.path.basename(json.load(open(os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", x, "args.json")))["pretrained_vlm"])
+            )
+        )
     for i, version in enumerate(versions):
         loss_path = os.path.join(args.checkpoint_dir, f"SSR-{args.stage}", version, "losses.npy")
         if not os.path.exists(loss_path):
@@ -50,8 +60,8 @@ def main(args: Namespace):
             mamba = "Mamba-" + os.path.basename(json.load(open(os.path.join(version_cfg["pretrained_midi"], "args.json")))["mamba"]).split("-")[1].upper()
             vlm = "-".join(os.path.basename(version_cfg["pretrained_vlm"]).split("-")[:-1])
         ax.plot(range(len(loss)), loss, color=colors[i][0], linestyle="-", alpha=0.5, zorder=1)
-        smoothed_loss = gaussian_filter1d(loss, sigma=300 if args.stage == "Reasoning" else 800)
-        ax.plot(range(len(smoothed_loss)), smoothed_loss, color=colors[i][1], linestyle="-", linewidth=3, label=f"{mamba} & {llm if args.stage == 'Reasoning' else vlm}", zorder=100)
+        smoothed_loss = gaussian_filter1d(loss, sigma=300)
+        ax.plot(range(len(smoothed_loss)), smoothed_loss, color=colors[i][1], linestyle="-", linewidth=3 if args.stage == "Reasoning" else 1, label=f"{mamba} & {llm if args.stage == 'Reasoning' else vlm}", zorder=100)
         losses += loss
     ax.set_xlim(left=0, right=len(losses) // len(versions))
     ax.set_ylim(bottom=min(losses) - 0.1, top=sorted(losses)[math.ceil(len(losses) * (0.9985 if args.stage == "VLM" else 0.99))])
@@ -72,9 +82,12 @@ def main(args: Namespace):
         , color="#4E616C"
         , zorder=-100
     )
-    plt.savefig(os.path.join(args.figure_dir, f"{args.stage}_Loss.png"), dpi=600)
     if args.pdf:
         plt.savefig(os.path.join(args.figure_dir, f"{args.stage}_Loss.pdf"))
+        if os.path.exists(os.path.join(args.figure_dir, f"{args.stage}_Loss.png")):
+            os.remove(os.path.join(args.figure_dir, f"{args.stage}_Loss.png"))
+    else:
+        plt.savefig(os.path.join(args.figure_dir, f"{args.stage}_Loss.png"), dpi=600)
     plt.close()
 
 

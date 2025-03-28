@@ -6,5 +6,6 @@ checkpoints
 *.flag
 __pycache__
 figure
-qwenvl.py
+baseline
 eval.sh
+bak

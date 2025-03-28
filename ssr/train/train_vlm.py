@@ -21,7 +21,7 @@ from transformers import AutoTokenizer, Qwen2_5_VLProcessor, CLIPProcessor, CLIP
 def get_args() -> Namespace:
     parser = ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Dataset"))
-    parser.add_argument("--mamba", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "mamba-130m-hf"))
+    parser.add_argument("--mamba", type=str, default=None)
     parser.add_argument("--clip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "clip-vit-large-patch14-336"))
     parser.add_argument("--siglip_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "siglip-so400m-patch14-384"))
     parser.add_argument("--pretrained_midi", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-Reasoning", "2025-03-08 23:35:10"))
@@ -85,12 +85,14 @@ def train(
 
 
 def main(args: Namespace) -> None:
-    args.output_dir = os.path.join(args.output_dir, str_datetime().strip("[]")[:-4])
-    os.makedirs(args.output_dir, exist_ok=True)
     accelerator = Accelerator()
-    accelerator.print(f"{str_datetime()} {args.output_dir=}")
+    if accelerator.is_main_process:
+        args.output_dir = os.path.join(args.output_dir, str_datetime().strip("[]")[:-4])
+        os.makedirs(args.output_dir, exist_ok=True)
+        accelerator.print(f"{str_datetime()} {args.output_dir=}")
 
     accelerator.print(f"{str_datetime()} Loading Tokenizer & Processor...")
+    args.mamba = json.load(open(os.path.join(args.pretrained_midi, "args.json")))["mamba"]
     mamba_tokenizer = AutoTokenizer.from_pretrained(args.mamba)
     mamba_tokenizer.add_tokens(SSRSpecialToken.TOR_TOKEN, special_tokens=True)
     vlm_processor = Qwen2_5_VLProcessor.from_pretrained(args.pretrained_vlm)
@@ -149,7 +151,8 @@ def main(args: Namespace) -> None:
     accelerator.print(f"{str_datetime()} Training...")
     losses = train(midi, vlm, dataloader, optimizer, scheduler, accelerator, tor_token_id, args.epochs)
 
-    np.save(os.path.join(args.output_dir, "losses.npy"), losses)
+    if accelerator.is_main_process:
+        np.save(os.path.join(args.output_dir, "losses.npy"), losses)
     accelerator.print(f"{str_datetime()} Saving Checkpoint into {args.output_dir} ...")
     accelerator.wait_for_everyone()
     accelerator.unwrap_model(midi).save_pretrained(

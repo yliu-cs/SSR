@@ -134,11 +134,11 @@ def load_depth_pro(model_path: str, device: torch.device) -> Tuple[DepthPro, Com
     return model, transform
 
 
-def get_depth(image_path: str, depthpro: DepthPro, depth_transform: Compose) -> torch.Tensor:
+def get_depth(image_path: str, depthpro: DepthPro, depth_transform: Compose, device: torch.device) -> torch.Tensor:
     image = Image.open(image_path).convert("RGB")
     image, _, f_px = depth_pro.load_pil(image)
     image = depth_transform(image)
-    image = image.to("cuda")
+    image = image.to(device)
     prediction = depthpro.infer(image, f_px=f_px)
     depth = prediction["depth"]
     return depth
@@ -168,7 +168,7 @@ def prepare_data(
     if depth_path is not None:
         raw_depth = colorize_depth(depth_path)
     else:
-        raw_depth = get_depth(image_path, depthpro, depth_transform).detach().cpu().numpy()
+        raw_depth = get_depth(image_path, depthpro, depth_transform, device).detach().cpu().numpy()
         raw_depth = (raw_depth - raw_depth.min()) / (raw_depth.max() - raw_depth.min()) * 255.0
         raw_depth = raw_depth.astype(np.uint8)
         raw_depth = np.stack([raw_depth, raw_depth, raw_depth], axis=-1)
@@ -178,7 +178,7 @@ def prepare_data(
         "role": "user"
         , "content": [
             {"type": "image", "image": raw_image.resize(image_size)}
-            , {"type": "text", "text": insert_tor("", n_tor) + question}
+            , {"type": "text", "text": f"{insert_tor('', n_tor)}\n{question}"}
         ]
     }]
     text = vlm_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -382,6 +382,7 @@ def main(args: Namespace) -> None:
     args.pretrained_midi = args.pretrained_midi.replace("$", " ")
     args.mamba = json.load(open(os.path.join(args.pretrained_midi, "args.json")))["mamba"]
     if not args.zeroshot:
+        args.mamba = json.load(open(os.path.join(args.pretrained_ssr, "args.json")))["mamba"]
         args.pretrained_vlm = json.load(open(os.path.join(args.pretrained_ssr, "args.json")))["pretrained_vlm"]
 
     print(f"{str_datetime()} Loading Tokenizer & Processor...")
@@ -396,6 +397,7 @@ def main(args: Namespace) -> None:
     freeze_module(siglip_model)
     print(f"{str_datetime()} Loading Depth Pro Model...")
     depthpro, depth_transform = load_depth_pro(args.depth_pro_path, device)
+    freeze_module(depthpro)
 
     print(f"{str_datetime()} Loading MIDI Model...")
     midi = MIDI.from_pretrained(args.pretrained_midi if args.zeroshot else os.path.join(args.pretrained_ssr, "MIDI"), device_map=device)
@@ -406,6 +408,7 @@ def main(args: Namespace) -> None:
     if not args.zeroshot:
         print(f"{str_datetime()} Loading SSRVLM Adapter...")
         vlm.load_adapter(os.path.join(args.pretrained_ssr, "SSRVLM"))
+        # vlm.load_adapter(args.pretrained_ssr)
     freeze_module(vlm)
     vlm.eval()
 
