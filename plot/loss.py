@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -27,6 +28,7 @@ def main(args: Namespace):
         , ("#FBB3E5", "#E95A85")
         , ("#C4B4E5", "#A373C8")
     ]
+    markers = ["o", "p", "P", "X"]
 
     plt.rc("font", **{"family": "Times New Roman", "size": 12})
     fig, ax = plt.subplots()
@@ -60,8 +62,18 @@ def main(args: Namespace):
             mamba = "Mamba-" + os.path.basename(json.load(open(os.path.join(version_cfg["pretrained_midi"], "args.json")))["mamba"]).split("-")[1].upper()
             vlm = "-".join(os.path.basename(version_cfg["pretrained_vlm"]).split("-")[:-1])
         ax.plot(range(len(loss)), loss, color=colors[i][0], linestyle="-", alpha=0.5, zorder=1)
-        smoothed_loss = gaussian_filter1d(loss, sigma=300)
-        ax.plot(range(len(smoothed_loss)), smoothed_loss, color=colors[i][1], linestyle="-", linewidth=3 if args.stage == "Reasoning" else 1, label=f"{mamba} & {llm if args.stage == 'Reasoning' else vlm}", zorder=100)
+        smoothed_loss = gaussian_filter1d(loss, sigma=300 if args.stage == "Reasoning" else 800)
+        ax.plot(
+            range(len(smoothed_loss))
+            , smoothed_loss
+            , color=colors[i][1]
+            , marker=markers[i]
+            , markevery=int(1e4) + random.randint(-int(1e4 * 0.3), int(1e4 * 0.3))
+            , linestyle="-"
+            , linewidth=1.5
+            , label=f"{mamba} & {llm if args.stage == 'Reasoning' else vlm}"
+            , zorder=100
+        )
         losses += loss
     ax.set_xlim(left=0, right=len(losses) // len(versions))
     ax.set_ylim(bottom=min(losses) - 0.1, top=sorted(losses)[math.ceil(len(losses) * (0.9985 if args.stage == "VLM" else 0.99))])
@@ -74,7 +86,8 @@ def main(args: Namespace):
         ax.spines[spine].set_color("none")
     legend = ax.legend(loc="upper right", markerscale=0.5, handlelength=1, prop={"size": 10})
     for line in legend.get_lines():
-        line.set_linewidth(3)
+        line.set_linewidth(1.5)
+        line.set_markersize(3)
     ax.grid(
         axis="y"
         , linestyle=(0, (5, 10))

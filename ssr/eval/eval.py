@@ -408,7 +408,6 @@ def main(args: Namespace) -> None:
     if not args.zeroshot:
         print(f"{str_datetime()} Loading SSRVLM Adapter...")
         vlm.load_adapter(os.path.join(args.pretrained_ssr, "SSRVLM"))
-        # vlm.load_adapter(args.pretrained_ssr)
     freeze_module(vlm)
     vlm.eval()
 
