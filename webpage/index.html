@@ -22,8 +22,10 @@
 					<div id="intro">
 						<h1>SSR</h1>
 						<p>Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning<br /></p>
-						<p><a href="https://yliu-cs.github.io" target="_blank">Yang Liu<sup>*</sup></a>, Ming Ma<sup>*</sup>, Xiaomin Yu<sup>*</sup>, <a href="https://dingpx.github.io" target="_blank">Pengxiang Ding</a>, <a href="https://h-zhao1997.github.io" target="_blank">Han Zhao</a>, <br />
-						Mingyang Sun, <a href="https://kyonhuang.top" target="_blank">Siteng Huang</a>, <a href="https://milab.westlake.edu.cn" target="_blank">Donglin Wang</a></p>
+						<p><a href="https://yliu-cs.github.io" target="_blank">Yang Liu<sup>1,†</sup></a>, Ming Ma<sup>3,†</sup>, Xiaomin Yu<sup>4,†</sup>, <a href="https://dingpx.github.io" target="_blank">Pengxiang Ding<sup>1,2,§</sup></a>, <a href="https://h-zhao1997.github.io" target="_blank">Han Zhao<sup>1,2</sup></a>, <br />
+						Mingyang Sun<sup>1,2,6</sup>, <a href="https://kyonhuang.top" target="_blank">Siteng Huang<sup>5</sup></a>, <a href="https://milab.westlake.edu.cn" target="_blank">Donglin Wang<sup>1,*</sup></a></p>
+						<p style="font-size: 0.8rem;"><sup>1</sup>Westlake University, <sup>2</sup>Zhejiang University, <sup>3</sup>Harbin Institute of Technology, <sup>4</sup>The Hong Kong University of Science and Technology (Guangzhou), <sup>5</sup>Alibaba DAMO Academy, <sup>6</sup>Shanghai Innovation Institute<br />
+						<sup>†</sup>Equal contribution. <sup>§</sup>Project lead. <sup>*</sup>Corresponding author.</p>
 						<ul class="actions">
 							<li><a href="#header" class="button icon solid solo fa-arrow-down scrolly">Continue</a></li>
 						</ul>
@@ -42,8 +44,8 @@
 							<li><a href="ssrbench.html">SSRBench</a></li>
 						</ul>
 						<ul class="icons">
-							<li><a href="#" class="icon brands" target="_blank"><i class="ai ai-arxiv"></i><span class="label">arXiv</span></a></li>
-							<li><a href="https://github.com/yliu-cs/SSR" class="icon brands fa-github" target="_blank"><span class="label">GitHub</span></a></li>
+							<li><a href="#" class="icon brands" target="_blank"><i class="ai ai-arxiv"><span> arXiv</span></i></a></li>
+							<li><a href="https://github.com/yliu-cs/SSR" class="icon brands fa-github" target="_blank"><span>Code</span></a></li>
 						</ul>
 					</nav>
 
@@ -66,7 +68,7 @@
 
 							<article class="post featured">
 								<header class="major">
-									<h3>SSR Method</h3>
+									<h3>SSR</h3>
 									<p style="text-align: left"></p>
 								</header>
 								<div class="image main"><img src="images/architecture.jpg" alt="" /></div>
@@ -106,6 +108,8 @@
 								<p>The improved performance of SSR compared to the backbone model across the four benchmarks at varying model scales.</p>
 								<div class="image main"><img src="images/aba.jpg" alt="" /></a>
 								<p>We conducted experiments to evaluate the SSR model without the second training phase. These experiments illustrate the performance of the MIDI module when integrated in a plug-and-play manner, leading to improved spatial understanding.</p>
+								<div class="image main"><img src="images/case_study.jpg" alt="" /></a>
+								<p>In the left example, the images depict only people and bananas. Consequently, the model must abandon conventional assumptions and carefully reason about the spatial relations explicitly present in the image to answer accurately. In the right example, complex relationships among numerous objects are depicted, and relevant features for answering the posed question are not immediately obvious. In this case, the model must thoroughly comprehend the correspondence between each object and the given question, as well as understand intricate spatial relations among these objects, to produce a correct response. These examples clearly demonstrate that our SSR effectively enhances the spatial awareness and reasoning capabilities of vision-language models, thereby significantly improving their ability to understand complex spatial relationships.</p>
 							</article>
 					</div>
 
