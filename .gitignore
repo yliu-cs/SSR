@@ -10,3 +10,10 @@ baseline
 eval.sh
 bak
 all_spatialbench.sh
+bench
+train_vlm_test.py
+eval_output
+eval_*.sh
+init_bench.json
+eval
+loss.py

@@ -1,4 +1,5 @@
 import torch
+import autoroot
 from torch.nn import CrossEntropyLoss
 from typing import List, Tuple, Union, Optional
 from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
@@ -81,7 +82,6 @@ class SSRVLM(Qwen2_5_VLForConditionalGeneration):
                 mask_unsqueezed = mask.unsqueeze(-1)
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 tor_mask = mask_expanded.to(inputs_embeds.device)
-
                 tor_embeds = tor_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(tor_mask, tor_embeds)
 

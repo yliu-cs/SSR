@@ -103,13 +103,19 @@ def main(args: Namespace) -> None:
         , siglip_processor=siglip_processor
         , siglip_model=siglip_model
     )
-
+    
+    tor_token_id = (
+        mamba_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
+        , llm_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
+    )
     accelerator.print(f"{str_datetime()} Loading Model...")
     model = MIDI(MIDIConfig(mamba_path_or_name=args.mamba, llm_path_or_name=args.llm))
+    
+    print('mamba emb is trained? ', model.mamba.get_input_embeddings().weight.requires_grad)
     freeze_module(model.llm)
     accelerator.print(f"{str_datetime()} Model: {count_params(model)}")
     model = accelerator.prepare(model)
- 
+    
     accelerator.print(f"{str_datetime()} Preparing Optimizer, Dataloader, Scheduler...")
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.lr)
     dataloader = DataLoader(dataset, batch_size=args.batch_size_per_gpu, shuffle=True, collate_fn=dataset.collate_fn)
@@ -119,10 +125,6 @@ def main(args: Namespace) -> None:
         , num_training_steps=(len(dataloader) * args.epochs)
     )
     optimizer, dataloader, scheduler = accelerator.prepare(optimizer, dataloader, scheduler)
-    tor_token_id = (
-        mamba_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
-        , llm_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
-    )
     accelerator.print(f"{str_datetime()} Training...")
     losses, _, _ = train(model, dataloader, optimizer, scheduler, accelerator, tor_token_id, args.epochs)
 

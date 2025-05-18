@@ -56,7 +56,6 @@ def train(
     for epoch in range(epochs):
         progress_bar = tqdm(dataloader, desc=f"{str_datetime()} [Epoch {epoch + 1}/{epochs}]", disable=not accelerator.is_local_main_process)
         for batch in progress_bar:
-            # with torch.no_grad():
             tor_embeds = midi(
                 mamba_input_ids=batch["mamba_input_ids"]
                 , mamba_attention_mask=batch["mamba_attention_mask"]
@@ -76,6 +75,13 @@ def train(
             )
             loss = outputs.loss
             accelerator.backward(loss)
+            with torch.no_grad():
+                embedding = vlm.get_input_embeddings()
+                grad = embedding.weight.grad
+                if grad is not None:
+                    mask = torch.zeros_like(grad)
+                    mask[tor_token_id[1]] = 1.0
+                    grad *= mask
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
@@ -86,11 +92,7 @@ def train(
 
 def main(args: Namespace) -> None:
     accelerator = Accelerator()
-    if accelerator.is_main_process:
-        args.output_dir = os.path.join(args.output_dir, str_datetime().strip("[]")[:-4])
-        os.makedirs(args.output_dir, exist_ok=True)
-        accelerator.print(f"{str_datetime()} {args.output_dir=}")
-
+    os.makedirs(args.output_dir, exist_ok=True)
     accelerator.print(f"{str_datetime()} Loading Tokenizer & Processor...")
     args.mamba = json.load(open(os.path.join(args.pretrained_midi, "args.json")))["mamba"]
     mamba_tokenizer = AutoTokenizer.from_pretrained(args.mamba)
@@ -121,7 +123,10 @@ def main(args: Namespace) -> None:
     accelerator.print(f"{str_datetime()} Loading Model...")
     midi = MIDI.from_pretrained(args.pretrained_midi)
     del midi.llm
-    # freeze_module(midi)
+    tor_token_id = (
+        mamba_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
+        , vlm_processor.tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
+    )
     vlm = SSRVLM.from_pretrained(args.pretrained_vlm)
     if args.lora:
         lora_config = LoraConfig(
@@ -132,6 +137,8 @@ def main(args: Namespace) -> None:
             , target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
         )
         vlm = get_peft_model(vlm, lora_config)
+        vlm.get_input_embeddings().weight.requires_grad_(True)
+
     accelerator.print(f"{str_datetime()} VLM: {count_params(vlm)}")
     midi, vlm = accelerator.prepare(midi, vlm)
 
@@ -144,10 +151,6 @@ def main(args: Namespace) -> None:
         , num_training_steps=(len(dataloader) * args.epochs)
     )
     optimizer, dataloader, scheduler = accelerator.prepare(optimizer, dataloader, scheduler)
-    tor_token_id = (
-        mamba_tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
-        , vlm_processor.tokenizer._tokenizer.token_to_id(SSRSpecialToken.TOR_TOKEN)
-    )
     accelerator.print(f"{str_datetime()} Training...")
     losses = train(midi, vlm, dataloader, optimizer, scheduler, accelerator, tor_token_id, args.epochs)
 
@@ -155,19 +158,22 @@ def main(args: Namespace) -> None:
         np.save(os.path.join(args.output_dir, "losses.npy"), losses)
     accelerator.print(f"{str_datetime()} Saving Checkpoint into {args.output_dir} ...")
     accelerator.wait_for_everyone()
+
+    accelerator.unwrap_model(midi).save_pretrained(
+        os.path.join(args.output_dir, "MIDI")
+        , is_main_process=accelerator.is_main_process
+        , save_function=accelerator.save
+        , state_dict=accelerator.get_state_dict(midi)
+    )
+    accelerator.print(f"{str_datetime()} MIDI Save Completed.")
+    accelerator.unwrap_model(vlm).save_pretrained(
+        os.path.join(args.output_dir, "SSRVLM")
+        , is_main_process=accelerator.is_main_process
+        , save_function=accelerator.save
+        , state_dict=accelerator.get_state_dict(vlm)
+    )
+    accelerator.print(f"{str_datetime()} VLM Save Completed.")
     if accelerator.is_main_process:
-        accelerator.unwrap_model(midi).save_pretrained(
-            os.path.join(args.output_dir, "MIDI")
-            , is_main_process=accelerator.is_main_process
-            , save_function=accelerator.save
-            , state_dict=accelerator.get_state_dict(midi)
-        )
-        accelerator.unwrap_model(vlm).save_pretrained(
-            os.path.join(args.output_dir, "SSRVLM")
-            , is_main_process=accelerator.is_main_process
-            , save_function=accelerator.save
-            , state_dict=accelerator.get_state_dict(vlm)
-        )
         with open(os.path.join(args.output_dir, "args.json"), "w") as json_file:
             json.dump(vars(args), json_file, indent=4)
     accelerator.print(f"{str_datetime()} Done.")

@@ -5,7 +5,7 @@ import numpy as np
 from torch import nn
 from PIL import Image
 from random import choice
-from typing import Tuple, Dict
+from typing import List, Tuple, Dict
 from torch.utils.data import Dataset
 from qwen_vl_utils import process_vision_info
 from ssr.utils.misc import load_jsonl, colorize_depth
@@ -90,7 +90,7 @@ class SSRCoTDataset4Reasoning(Dataset):
             print(f"{e=}")
             return choice(self)
     
-    def collate_fn(self, batch: list[dict]) -> Dict[str, torch.Tensor]:
+    def collate_fn(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
         mamba_input_ids, mamba_attention_mask, mamba_labels = [[item[key] for item in batch] for key in ("mamba_input_ids", "mamba_attention_mask", "mamba_labels")]
         llm_input_ids, llm_attention_mask, llm_labels = [[item[key] for item in batch] for key in ("llm_input_ids", "llm_attention_mask", "llm_labels")]
         mamba_input_ids = nn.utils.rnn.pad_sequence(sequences=mamba_input_ids, batch_first=True, padding_value=self.mamba_tokenizer.pad_token_id, padding_side="left")

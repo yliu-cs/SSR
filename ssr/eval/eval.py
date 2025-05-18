@@ -11,17 +11,19 @@ from ssr.models.vlm import SSRVLM
 from datasets import load_dataset
 from depth_pro.depth_pro import DepthPro
 from torchvision.transforms import Compose
+from ssr.eval.explicit_cot import get_score
 from qwen_vl_utils import process_vision_info
 from argparse import Namespace, ArgumentParser
 from typing import List, Dict, Union, Tuple, Any
 from ssr.utils.prompt import SSRSpecialToken, insert_tor
 from ssr.utils.misc import quiet, str_datetime, change_ext, colorize_depth, freeze_module
-from transformers import AutoTokenizer, Qwen2_5_VLProcessor, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel, PreTrainedTokenizer
+from transformers import AutoTokenizer, Qwen2_5_VLProcessor, CLIPProcessor, CLIPVisionModel, SiglipProcessor, SiglipVisionModel, PreTrainedTokenizer, AutoModelForCausalLM
 
 
 TASK = {
     "SpatialBench": ["positional", "existence", "counting", "reach", "size"]
     , "MME": ["OCR", "celebrity", "color", "count", "landmark", "position", "scene", "artwork", "code_reasoning", "commonsense_reasoning", "existence", "numerical_calculation", "posters", "text_translation"]
+    , "SSRBench": ["relative position recognition", "action recognition", "attribute recognition", "existence", "count", "position based object recognition"]         
 }
 
 
@@ -35,9 +37,10 @@ def get_args() -> Namespace:
     parser.add_argument("--pretrained_midi", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-Reasoning", "2025-03-08 23:35:10"))
     parser.add_argument("--pretrained_vlm", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-VL-3B-Instruct"))
     parser.add_argument("--pretrained_ssr", type=str, default=os.path.join(os.getcwd(), "checkpoints", "SSR-VLM", "2025-03-19 17:14:10"))
+    parser.add_argument("--llm_path", type=str, default=os.path.join(os.sep, "ssdwork", "liuyang", "Models", "Qwen2.5-14B-Instruct-1M"))
     parser.add_argument("--n_tor", type=int, default=10)
     parser.add_argument("--image_size", type=Tuple[int, int], default=(256, 256))
-    parser.add_argument("--benchmark", type=str, default="SpatialBench", choices=["SpatialBench", "CV-Bench", "MME"])
+    parser.add_argument("--benchmark", type=str, default="SpatialBench", choices=["SpatialBench", "CV-Bench", "MME", "SSRBench"])
     parser.add_argument("--zeroshot", action="store_true")
     return parser.parse_args()
 
@@ -62,8 +65,23 @@ def load_spatialbench_data(data_dir: str) -> List[str]:
         with open(os.path.join(data_dir, f"{task}.json"), "r") as f:
             data[task] = json.load(f)
         suffix = ""
-        if task == "existence":
+        if task == "existence" or task == "reach":
             suffix = " Response \"Yes\" or \"No\" only."
+        if task == "reach":
+            for d in data[task]:
+                option = d["question"].split(') ')[1][0]
+                if option == 'N':
+                    option_dict = {
+                        "A" : "No",
+                        "B" : "Yes"
+                    }
+                else:
+                    option_dict = {
+                        "B" : "No",
+                        "A" : "Yes"
+                    }
+                d["answer"] = option_dict[d["answer"]]
+                d["question"] = d["question"].split('\n')[0]
         data[task] = list(map(
             lambda x: {
                 "question": x["question"] + suffix
@@ -114,11 +132,30 @@ def load_mme_data(data_dir: str) -> List[str]:
     return data
 
 
+def load_ssrbench_data(data_dir: str) -> List[str]:
+    result_datas = {}
+    for task in TASK["SSRBench"]:
+        result_datas[task] = []
+    with open("./bench/bench.json", 'r', encoding='utf-8') as f:
+        datas = json.load(f)
+    for data in datas:
+            task = data['task']
+            result_data = {
+                "question": data["question"]
+                , "answer": data["answer"]
+                , "image_path": os.path.join(args.data_dir, 'SSR-CoT', data["image_path"])
+                , "depth_path": os.path.join(args.data_dir, 'SSR-CoT', data["depth_path"])
+            }
+            result_datas[task].append(result_data)
+    return result_datas
+
+
 def load_data(data_dir: str, benchmark: str) -> List[str]:
     func_map = {
         "SpatialBench": load_spatialbench_data
         , "CV-Bench": load_cvbench_data
         , "MME": load_mme_data
+        , "SSRBench": load_ssrbench_data
     }
     assert benchmark in func_map
     return func_map[benchmark](data_dir)
@@ -178,7 +215,8 @@ def prepare_data(
         "role": "user"
         , "content": [
             {"type": "image", "image": raw_image.resize(image_size)}
-            , {"type": "text", "text": f"{insert_tor('', n_tor)}\n{question}"}
+            # , {"type": "text", "text": f"{insert_tor('', n_tor)}\n{question}"}
+            , {"type": "text", "text": f"{question}"}
         ]
     }]
     text = vlm_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -247,8 +285,8 @@ def inference(
             , pixel_values=sample["vlm_pixel_values"]
             , image_grid_thw=sample["vlm_image_grid_thw"]
             , max_new_tokens=128
-            , tor_embeds=tor_embeds
-            , tor_token_id=tor_token_id[1]
+            # , tor_embeds=tor_embeds
+            # , tor_token_id=tor_token_id[1]
         )
     generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(sample["vlm_input_ids"], generated_ids)]
     output_text = vlm_processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
@@ -307,7 +345,7 @@ def calc_spatialbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> N
     metrics = {}
     for task in full_result.keys():
         result = full_result[task]
-        if task in ["reach","size"]:
+        if task in ["size", "reach"]:
             scores, full_scores = 0, 0
             for j in range(len(result)):
                 if j % 2 == 1:
@@ -362,6 +400,43 @@ def calc_cvbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> None:
                 scores = scores + 1
             full_scores = full_scores + 1
         metrics[task] = 100 * scores / full_scores
+    return metrics
+
+
+def calc_ssrbench_metrics(full_result: Dict[str, List[Dict[str, Any]]]) -> None:
+    metrics = {}
+    print(f"{str_datetime()}: Loading LLM from {args.llm_path}...")
+    tokenizer = AutoTokenizer.from_pretrained(args.llm_path)
+    llm = AutoModelForCausalLM.from_pretrained(args.llm_path, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="cuda")
+    freeze_module(llm)
+    llm.eval()
+    for task in full_result.keys():
+        result = full_result[task]
+        preds, scores = [], []
+        for j in tqdm(range(len(result)), desc=f"Calculating {task}:"):
+            for i in range(2):
+                pred, score = get_score(result[j]["question"]
+                    , result[j]["response"]
+                    , result[j]["answer"]
+                    , llm
+                    , tokenizer
+                )
+                if (isinstance(pred, str) and isinstance(score, int)):
+                    break
+            if not isinstance(pred, str) :
+                if pred == 1:
+                    pred = 'yes'
+                elif pred == 0:
+                    pred = 'no'
+                elif score <= 2:
+                    pred = 'no'
+                else:
+                    pred = 'yes'
+            preds.append(pred.lower())
+            scores.append(float(score))
+        metrics[task] = {}
+        metrics[task]['pred'] = 100 * preds.count("yes") / len(preds)
+        metrics[task]['score'] = sum(scores) / len(scores)
     return metrics
 
 
@@ -434,6 +509,8 @@ def main(args: Namespace) -> None:
 
     print(f"{str_datetime()} {os.path.basename(args.mamba)} {os.path.basename(args.pretrained_vlm)} {args.benchmark} {args.zeroshot=}")
     print(f"{str_datetime()} Calculating Metrics...")
+    del vlm
+    del midi
     if args.benchmark == "SpatialBench":
         metrics = calc_spatialbench_metrics(result)
         for task, score in metrics.items():
@@ -444,7 +521,10 @@ def main(args: Namespace) -> None:
             print(f"{str_datetime()} {task:<10}: {round(score, 1)}")
     elif args.benchmark == "MME":
         save_mme_result(result, os.path.join(args.data_dir, args.benchmark, "Results", str_datetime().strip("[]")[:-4]))
-
+    elif args.benchmark == "SSRBench":
+        metrics = calc_ssrbench_metrics(result)
+        for task, scores in metrics.items():
+            print(f"{str_datetime()} {task:<10}: {round(scores['pred'], 1)}, {round(scores['score'], 2)}")
 
 if __name__ == "__main__":
     quiet()
