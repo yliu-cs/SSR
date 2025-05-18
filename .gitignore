@@ -5,7 +5,6 @@ test
 checkpoints
 *.flag
 __pycache__
-figure
 baseline
 eval.sh
 bak
