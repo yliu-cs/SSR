@@ -33,11 +33,11 @@ Thanks [Meteor](https://github.com/ByungKwanLee/Meteor), [SpatialBot](https://gi
 Please cite our paper if you use PiTe in your work:
 
 ```bibtex
-@article{journals/corr/abs-xxxx-xxxxx,
+@article{journals/corr/abs-2505-12448,
   author       = {Yang Liu and Ming Ma and Xiaomin Yu and Pengxiang Ding and Han Zhao and Mingyang Sun and Siteng Huang and Donglin Wang},
   title        = {SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning},
   journal      = {CoRR},
-  volume       = {abs/xxxx.xxxxx},
+  volume       = {abs/2505.12448},
   year         = {2025},
 }
 ```
