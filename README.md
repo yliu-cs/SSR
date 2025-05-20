@@ -1,6 +1,6 @@
 # 🎬 SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning
 
-[SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning](#)
+[SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning](https://arxiv.org/abs/2505.12448)
 
 [Yang Liu*](https://yliu-cs.github.io), Ming Ma*, Xiaomin Yu*, [Pengxiang Ding](https://dingpx.github.io), [Han Zhao](https://h-zhao1997.github.io), Mingyang Sun, [Siteng Huang](https://kyonhuang.top), [Donglin Wang](https://milab.westlake.edu.cn)
 
