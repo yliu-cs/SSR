@@ -4,6 +4,10 @@
 
 [Yang Liu*](https://yliu-cs.github.io), Ming Ma*, Xiaomin Yu*, [Pengxiang Ding](https://dingpx.github.io), [Han Zhao](https://h-zhao1997.github.io), Mingyang Sun, [Siteng Huang](https://kyonhuang.top), [Donglin Wang](https://milab.westlake.edu.cn)
 
+[![Static Badge](https://img.shields.io/badge/arXiv-2505.12448-brown)](https://arxiv.org/abs/2505.12448)
+[![Static Badge](https://img.shields.io/badge/Project_Page-SSR-blue)](https://yliu-cs.github.io/SSR)
+[![Static Badge](https://img.shields.io/badge/HuggingFace-Model_&_Dataset_&_Benchmark-yellow)](https://huggingface.co/collections/yliu-cs/ssr-682d44496b64e4edd94092bb)
+
 ![](figure/teaser.jpg)
 
 Despite impressive advancements in Visual-Language Models (VLMs) for multi-modal tasks, their reliance on RGB inputs limits precise spatial understanding. Existing methods for integrating spatial cues, such as point clouds or depth, either require specialized sensors or fail to effectively exploit depth information for higher-order reasoning. To this end, we propose a novel Spatial Sense and Reasoning method, dubbed SSR, a novel framework that transforms raw depth data into structured, interpretable textual rationales. These textual rationales serve as meaningful intermediate representations to significantly enhance spatial reasoning capabilities. Additionally, we leverage knowledge distillation to compress the generated rationales into compact latent embeddings, which facilitate resource-efficient and plug-and-play integration into existing VLMs without retraining. To enable comprehensive evaluation, we introduce a new dataset named SSR-CoT, a million-scale visual-language reasoning dataset enriched with intermediate spatial reasoning annotations, and present SSRBench, a comprehensive multi-task benchmark. Extensive experiments on multiple benchmarks demonstrate SSR substantially improves depth utilization and enhances spatial reasoning, thereby advancing VLMs toward more human-like multi-modal understanding.
@@ -32,7 +36,7 @@ SSR-CoT
 |-- SpatialQA
 `   `-- images
 ```
-`ssr-cot.jsonl` can be downloaded from [huggingface](https://huggingface.co/datasets/yliu-cs/SSR-CoT).
+`ssr-cot.jsonl` can be downloaded from [HuggingFace](https://huggingface.co/datasets/yliu-cs/SSR-CoT).
 
 ## 🏠 Installation
 
@@ -57,9 +61,12 @@ accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_vlm.py --lor
 
 ## 📷 Model Checkpoint
 
-Coming Soon ...
+| Model   | URL                                                      | Model   | URL                                                      |
+|---------|----------------------------------------------------------|---------|----------------------------------------------------------|
+| MIDI 7B | [HuggingFace](https://huggingface.co/yliu-cs/SSR-MIDI-7B)| VLM 7B  | [HuggingFace](https://huggingface.co/yliu-cs/SSR-VLM-7B) |
 
 ## 🎯 Inference
+
 
 Coming Soon ...
 
