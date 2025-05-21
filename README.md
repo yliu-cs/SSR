@@ -1,4 +1,4 @@
-# 🎬 SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning
+# 🔍 SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning
 
 [SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning](https://arxiv.org/abs/2505.12448)
 
@@ -8,9 +8,31 @@
 
 Despite impressive advancements in Visual-Language Models (VLMs) for multi-modal tasks, their reliance on RGB inputs limits precise spatial understanding. Existing methods for integrating spatial cues, such as point clouds or depth, either require specialized sensors or fail to effectively exploit depth information for higher-order reasoning. To this end, we propose a novel Spatial Sense and Reasoning method, dubbed SSR, a novel framework that transforms raw depth data into structured, interpretable textual rationales. These textual rationales serve as meaningful intermediate representations to significantly enhance spatial reasoning capabilities. Additionally, we leverage knowledge distillation to compress the generated rationales into compact latent embeddings, which facilitate resource-efficient and plug-and-play integration into existing VLMs without retraining. To enable comprehensive evaluation, we introduce a new dataset named SSR-CoT, a million-scale visual-language reasoning dataset enriched with intermediate spatial reasoning annotations, and present SSRBench, a comprehensive multi-task benchmark. Extensive experiments on multiple benchmarks demonstrate SSR substantially improves depth utilization and enhances spatial reasoning, thereby advancing VLMs toward more human-like multi-modal understanding.
 
-## 🗄️ Dataset SSR-CoT and Benchmark SSRBench
+## 📚 SSR-CoT Dataset
 
-Coming Soon ...
+We collect the following four datasets:
+
+* LLaVA-CoT [[link](https://github.com/PKU-YuanGroup/LLaVA-CoT)]
+* Visual-CoT [[link](https://github.com/deepcs233/Visual-CoT)]
+* VoCoT [[link](https://github.com/RupertLuo/VoCoT)]
+* SpatialQA [[link](https://github.com/BAAI-DCAI/SpatialBot)]
+
+The SSR-CoT dataset directory tree is shown as below:
+```sh
+SSR-CoT
+|-- ssr-cot.jsonl
+|-- LLaVA-CoT-100k
+|   |-- CLEVR_v1.0
+|   |-- CLEVR_v1.0_d  # contains depth
+|   `-- ...
+|-- Visual-CoT
+|   `-- images
+|-- VoCoT
+|   `-- images
+|-- SpatialQA
+`   `-- images
+```
+`ssr-cot.jsonl` can be downloaded from [huggingface](https://huggingface.co/datasets/yliu-cs/SSR-CoT).
 
 ## 🏠 Installation
 
@@ -23,11 +45,7 @@ cd SSR
 pip install -r requirements.txt
 ```
 
-## 💎 Model Checkpoint
-
-Coming Soon ...
-
-## ✴️ Training & Inference
+## 🚀 Training
 
 ```sh
 # Training Stage 1
@@ -35,10 +53,19 @@ accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_reasoning.py
 
 # Training Stage 2
 accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_vlm.py --lora --llava
-
-# Inference
-# Coming Soon ...
 ```
+
+## 📷 Model Checkpoint
+
+Coming Soon ...
+
+## 🎯 Inference
+
+Coming Soon ...
+
+## 👁️ SSRBench Benchmark
+
+Coming Soon ...
 
 ## ❤️ Acknowledgment
 
@@ -57,3 +84,4 @@ Please cite our paper if you use PiTe in your work:
   year         = {2025},
 }
 ```
+
