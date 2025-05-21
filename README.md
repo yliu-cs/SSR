@@ -14,7 +14,14 @@ Coming Soon ...
 
 ## 🏠 Installation
 
-Coming Soon ...
+```sh
+git clone https://github.com/yliu-cs/SSR.git
+conda create -n SSR python=3.11
+conda activate SSR
+cd SSR
+
+pip install -r requirements.txt
+```
 
 ## 💎 Model Checkpoint
 
@@ -22,7 +29,16 @@ Coming Soon ...
 
 ## ✴️ Training & Inference
 
-Coming Soon ...
+```sh
+# Training Stage 1
+accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_reasoning.py
+
+# Training Stage 2
+accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_vlm.py --lora --llava
+
+# Inference
+# Coming Soon ...
+```
 
 ## ❤️ Acknowledgment
 
