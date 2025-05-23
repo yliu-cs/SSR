@@ -80,7 +80,7 @@ Thanks [Meteor](https://github.com/ByungKwanLee/Meteor), [SpatialBot](https://gi
 
 ## 📜 Citation
 
-Please cite our paper if you use PiTe in your work:
+Please cite our paper if you use SSR in your work:
 
 ```bibtex
 @article{journals/corr/abs-2505-12448,
