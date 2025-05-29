@@ -67,8 +67,11 @@ accelerate launch --config_file "scripts/fsdp.yaml" ssr/train/train_vlm.py --lor
 
 ## 🎯 Inference
 
+```python
+python infer.py
+```
 
-Coming Soon ...
+> Response: *The image features a young woman with long black hair, who is kneeling down by a pool of water. She appears to be interacting with the water, possibly splashing it or touching it with her hand. The woman is wearing a white dress, which complements the serene and refreshing atmosphere of the scene.*
 
 ## 👁️ SSRBench Benchmark
 
