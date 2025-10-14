@@ -21,3 +21,11 @@ scripts/eval
 scripts/train
 ssr/data/llava_instruct.py
 ssr/data/preprocess.py
+download.py
+eval_general
+plot/cos_sim.py
+*intern*
+conversation.py
+ckpt
+*qwen*
+log

@@ -78,11 +78,13 @@ class SSRVLM(Qwen2_5_VLForConditionalGeneration):
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
             if tor_embeds is not None:
+                # print(f"{tor_embeds.shape=}")
                 mask = input_ids == tor_token_id
                 mask_unsqueezed = mask.unsqueeze(-1)
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
                 tor_mask = mask_expanded.to(inputs_embeds.device)
                 tor_embeds = tor_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                # print(f"{tor_mask.shape=} {tor_embeds.shape=}")
                 inputs_embeds = inputs_embeds.masked_scatter(tor_mask, tor_embeds)
 
             if attention_mask is not None:

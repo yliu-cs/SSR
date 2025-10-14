@@ -1,4 +1,4 @@
-# 🔍 SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning
+# 🔍 SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning (NeurIPS 2025)
 
 [SSR: Enhancing Depth Perception in Vision-Language Models via Rationale-Guided Spatial Reasoning](https://arxiv.org/abs/2505.12448)
 
@@ -75,7 +75,59 @@ python infer.py
 
 ## 👁️ SSRBench Benchmark
 
-Coming Soon ...
+`ssrbench.json` can be downloaded from [HuggingFace](https://huggingface.co/datasets/yliu-cs/SSRBench).
+
+LLM-Assistant evaluation can refer to the following function:
+
+```python
+def get_score(
+    question: str
+    , response: str
+    , answer: str
+    , llm: AutoModelForCausalLM
+    , tokenizer: AutoTokenizer
+) -> Tuple[str, float]:
+    messages = [
+        {
+            "role": "system"
+            , "content":
+                "You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs."
+                "Your task is to compare the predicted answer with the correct answer and determine if they match meaningfully. Here's how you can accomplish the task:"
+                "------"
+                "##INSTRUCTIONS: "
+                "- Focus on the meaningful match between the predicted answer and the correct answer.\n"
+                "- Consider synonyms or paraphrases as valid matches.\n"
+                "- Evaluate the correctness of the prediction compared to the answer."
+        }
+        , {
+            "role": "user",
+            "content":
+                "Please evaluate the following image-based question-answer pair:\n\n"
+                f"Question: {question}\n"
+                f"Correct Answer: {answer}\n"
+                f"Predicted Answer: {response}\n\n"
+                "Provide your evaluation only as a yes/no and score where the score is an integer value between 0 and 5, with 5 indicating the highest meaningful match. "
+                "Please generate the response in the form of a Python dictionary string with keys 'pred' and 'score', where value of 'pred' is  a string of 'yes' or 'no' and value of 'score' is in INTEGER, not STRING."
+                "DO NOT PROVIDE ANY OTHER OUTPUT TEXT OR EXPLANATION. Only provide the Python dictionary string. "
+                "For example, your response should look like this: {'pred': 'yes', 'score': 4.8}."
+        }
+    ]
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    while True:
+        try:
+            llm_inputs = tokenizer([text], return_tensors="pt").to(llm.device)
+            generated_ids = llm.generate(**llm_inputs, max_new_tokens=256)
+            generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(llm_inputs.input_ids, generated_ids)]
+            response = literal_eval(tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0])
+            break
+        except:
+            continue
+    return response["pred"], response["score"]
+```
 
 ## ❤️ Acknowledgment
 
